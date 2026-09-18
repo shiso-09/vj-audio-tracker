@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VJ Audio Tracker</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #121212;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    .container {
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 20px; }
+    button {
+      background-color: #1db954;
+      color: white;
+      border: none;
+      padding: 16px 32px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      border-radius: 50px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(29, 185, 84, 0.4);
+      transition: transform 0.2s;
+    }
+    button:active { transform: scale(0.95); }
+    button:disabled { background-color: #555; cursor: not-allowed; }
+    .card {
+      background-color: #1e1e1e;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 25px;
+      text-align: left;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      display: none;
+    }
+    .bpm-badge {
+      font-size: 3rem;
+      font-weight: bold;
+      color: #1db954;
+      text-align: center;
+      margin: 10px 0;
+    }
+    .info-item { margin-bottom: 12px; }
+    .info-label { font-size: 0.8rem; color: #aaa; }
+    .info-value { font-size: 1.1rem; font-weight: 600; }
+    .link-btn {
+      display: block;
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #282828;
+      color: #1db954;
+      text-decoration: none;
+      text-align: center;
+      border-radius: 8px;
+      font-weight: bold;
+    }
+    #status { margin-top: 15px; font-size: 0.9rem; color: #ccc; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>VJ Audio Tracker</h1>
+    <button id="recordBtn">Start Listening</button>
+    <div id="status">ボタンを押して解析を開始してください</div>
+
+    <div id="resultCard" class="card">
+      <div class="info-label" style="text-align:center;">ESTIMATED BPM</div>
+      <div id="bpmVal" class="bpm-badge">--</div>
+
+      <div class="info-item">
+        <div class="info-label">曲名</div>
+        <div id="titleVal" class="info-value">-</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">アーティスト</div>
+        <div id="artistVal" class="info-value">-</div>
+      </div>
+
+      <a id="lyricsLink" class="link-btn" href="#" target="_blank">🔍 歌詞をGoogleで検索</a>
+    </div>
+  </div>
+
+  <script>
+    const recordBtn = document.getElementById('recordBtn');
+    const statusDiv = document.getElementById('status');
+    const resultCard = document.getElementById('resultCard');
+
+    let mediaRecorder;
+    let audioChunks = [];
+
+    recordBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable = (event) => {
+          audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          statusDiv.textContent = '解析中...';
+          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'sample.wav');
+
+          try {
+            const response = await fetch('/api/identify', {
+              method: 'POST',
+              body: formData
+            });
+            const data = await response.json();
+
+            if (data.success) {
+              document.getElementById('bpmVal').textContent = data.bpm;
+              document.getElementById('titleVal').textContent = data.title;
+              document.getElementById('artistVal').textContent = data.artist;
+              document.getElementById('lyricsLink').href = data.searchLyricsUrl;
+              resultCard.style.display = 'block';
+              statusDiv.textContent = '解析完了！';
+            } else {
+              statusDiv.textContent = data.message || '曲を特定できませんでした。';
+            }
+          } catch (err) {
+            console.error(err);
+            statusDiv.textContent = 'エラーが発生しました。';
+          } finally {
+            recordBtn.disabled = false;
+          }
+        };
+
+        mediaRecorder.start();
+        recordBtn.disabled = true;
+        statusDiv.textContent = '録音中... (5秒間音声を拾います)';
+
+        setTimeout(() => {
+          mediaRecorder.stop();
+          stream.getTracks().forEach(track => track.stop());
+        }, 5000);
+
+      } catch (err) {
+        console.error(err);
+        alert('マイクの使用許可が必要です。');
+      }
+    });
+  </script>
+</body>
+</html>
