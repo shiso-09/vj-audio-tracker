@@ -320,7 +320,7 @@
     let segmentsData = [];
     let trackDurationSec = 0;
     let baseOffsetSec = 0;
-    let recordEndTime = 0; // 【修正】計算の基準を録音完了時に変更
+    let recordEndTime = 0; 
     let parsedLyrics = [];
 
     let autoRefreshTimer = null;
@@ -340,7 +340,6 @@
 
     startBtn.addEventListener('click', async () => {
       try {
-        // 【修正】iPhone（iOS）の自動音量調整やノイズキャンセリングを強制オフにして生のキックを拾う
         const stream = await navigator.mediaDevices.getUserMedia({ 
           audio: {
             echoCancellation: false,
@@ -373,32 +372,38 @@
         scriptNode.connect(audioCtx.destination);
 
         let energyHistory = [];
+        let previousEnergy = 0;
         
         scriptNode.onaudioprocess = () => {
           const array = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(array);
           
           let sum = 0;
-          // より低音（キックドラムの帯域）だけに限定して音量を計算
-          const limit = Math.min(8, array.length); 
+          // 【極大修正】0Hz〜約250Hzの超低音（キックドラムの帯域）のみに制限し、スネアやボーカルを完全無視する
+          const limit = Math.min(3, array.length); 
           for (let i = 0; i < limit; i++) {
             sum += array[i];
           }
           let currentEnergy = sum / limit;
 
           energyHistory.push(currentEnergy);
-          if (energyHistory.length > 30) energyHistory.shift();
+          if (energyHistory.length > 40) energyHistory.shift();
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
           
-          // AGCをオフにしたため、無音時のノイズを無視しつつキックの跳ね上がり(1.2倍)を検知
-          if (currentEnergy > avgEnergy * 1.2 && currentEnergy > 2 && (now - lastBeatTime) > 300) {
+          // 【極大修正】音が急に立ち上がった瞬間（ピーク）のみをビートとする
+          const isPeak = currentEnergy > previousEnergy && currentEnergy > avgEnergy * 1.35 && currentEnergy > 15;
+          previousEnergy = currentEnergy;
+
+          // インターバルを330ms(最大約181BPM)に制限し、8分音符の誤検知を防ぐ
+          if (isPeak && (now - lastBeatTime) > 330) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
-              if (interval >= 330 && interval <= 1000) { 
+              if (interval >= 330 && interval <= 1200) { 
                 beatIntervals.push(interval);
-                if (beatIntervals.length > 10) beatIntervals.shift();
+                // 過去8回分のビートから中央値を算出（安定感アップ）
+                if (beatIntervals.length > 8) beatIntervals.shift();
                 
                 const sorted = [...beatIntervals].sort((a, b) => a - b);
                 const medianInterval = sorted[Math.floor(sorted.length / 2)];
@@ -408,7 +413,8 @@
                   realtimeBpm = calculated;
                   lastStableBpm = calculated;
                 } else {
-                  realtimeBpm = Math.round(realtimeBpm * 0.8 + calculated * 0.2);
+                  // 急な数値のブレを防ぐスムージング処理
+                  realtimeBpm = Math.round(realtimeBpm * 0.7 + calculated * 0.3);
                 }
                 
                 realtimeBpmVal.textContent = realtimeBpm;
@@ -473,7 +479,7 @@
       mediaRecorder.ondataavailable = e => chunks.push(e.data);
       
       mediaRecorder.onstop = async () => {
-        // 【修正】計算の基準時間を「録音開始時」から「録音完了時」へシフト。これで8秒分のズレが直る
+        // 歌詞のズレを直すため、時間の基準を「録音が終わった瞬間」にする
         recordEndTime = performance.now(); 
 
         const blob = new Blob(chunks, { type: 'audio/wav' });
