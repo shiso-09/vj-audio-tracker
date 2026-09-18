@@ -43,15 +43,13 @@
       text-align: left;
     }
     .bpm-box {
-      display: flex;
-      justify-content: space-around;
       background: #2a2a2a;
-      padding: 10px;
+      padding: 12px;
       border-radius: 8px;
       margin: 10px 0;
       text-align: center;
     }
-    .bpm-num { font-size: 2.2rem; font-weight: bold; color: #1db954; }
+    .bpm-num { font-size: 2.8rem; font-weight: bold; color: #1db954; line-height: 1; margin-top: 4px; }
     .info-item { margin-bottom: 8px; }
     .info-label { font-size: 0.75rem; color: #aaa; }
     .info-value { font-size: 1.0rem; font-weight: 600; }
@@ -65,68 +63,54 @@
     }
     canvas {
       width: 100%;
-      height: 65px;
+      height: 60px;
       display: block;
     }
 
     .lyrics-wrapper {
       display: flex;
-      gap: 10px;
+      gap: 12px;
       margin-top: 6px;
       align-items: stretch;
     }
     .album-art {
-      width: 110px;
-      height: 110px;
+      width: 120px;
+      height: 120px;
       border-radius: 8px;
       object-fit: cover;
       flex-shrink: 0;
       border: 1px solid #333;
       display: none;
+      background-color: #222;
     }
     .lyrics-container {
       flex: 1;
       background: #000;
       border-radius: 8px;
-      padding: 10px 12px;
-      height: 110px;
+      padding: 12px;
+      height: 120px;
       overflow-y: auto;
-      white-space: pre-wrap;
-      font-size: 0.85rem;
+      font-size: 0.88rem;
       line-height: 1.6;
-      color: #ddd;
+      color: #777;
       border: 1px solid #333;
       box-sizing: border-box;
+      scroll-behavior: smooth;
     }
-    .status-bar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 10px;
-      font-size: 0.75rem;
-      color: #aaa;
-      background: #181818;
-      padding: 6px 10px;
-      border-radius: 6px;
+    .lyric-line {
+      margin-bottom: 8px;
+      transition: color 0.2s ease, font-weight 0.2s ease, transform 0.2s ease;
     }
-    .ratio-highlight { color: #1db954; font-weight: bold; }
-    .warning-box {
-      background: #3a2000;
-      color: #ffaa00;
-      padding: 8px;
-      border-radius: 6px;
-      font-size: 0.75rem;
-      margin-bottom: 10px;
-      display: none;
+    .lyric-line.active {
+      color: #1db954;
+      font-weight: bold;
+      font-size: 0.95rem;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>VJ Audio Tracker</h1>
-    <div id="warnBox" class="warning-box">
-      ⚠️ Spotify API認証エラーのため、簡易波形モードで動作しています。Renderの環境変数（Client ID / Secret）をご確認ください。
-    </div>
 
     <div class="btn-group">
       <button id="startBtn">解析開始</button>
@@ -136,14 +120,8 @@
 
     <div class="card">
       <div class="bpm-box">
-        <div>
-          <div class="info-label">マイク解析BPM</div>
-          <div id="realtimeBpmVal" class="bpm-num">--</div>
-        </div>
-        <div>
-          <div class="info-label">原曲DB BPM</div>
-          <div id="originalBpmVal" class="bpm-num" style="color: #3498db;">--</div>
-        </div>
+        <div class="info-label">マイクリアルタイムBPM</div>
+        <div id="realtimeBpmVal" class="bpm-num">--</div>
       </div>
 
       <div class="info-item">
@@ -157,7 +135,7 @@
 
       <div class="info-label" style="margin-top:10px;">エネルギー構造 & 現在再生位置</div>
       <div class="graph-container">
-        <canvas id="energyCanvas" width="380" height="65"></canvas>
+        <canvas id="energyCanvas" width="380" height="60"></canvas>
       </div>
 
       <div class="info-label" style="margin-top:10px;">自動同期歌詞</div>
@@ -165,41 +143,29 @@
         <img id="albumArt" class="album-art" src="" alt="Album Art">
         <div id="lyricsBox" class="lyrics-container">曲が識別されるとここに歌詞が表示されます。</div>
       </div>
-      
-      <div class="status-bar">
-        <span>スクロール追従速度:</span>
-        <span id="syncRatioVal" class="ratio-highlight">1.00x (標準)</span>
-      </div>
     </div>
   </div>
 
   <script>
-    let audioCtx, analyser, microphone, scriptNode;
+    let audioCtx, analyser, microphone, lowpassFilter, scriptNode;
     let lastBeatTime = 0;
     let beatIntervals = [];
     let mediaRecorder, streamRef;
-    let scrollInterval = null;
-    let graphAnimId = null;
+    let syncAnimId = null;
 
-    let originalBpm = null;
     let realtimeBpm = null;
-    let currentScrollSpeed = 1.0;
-
     let segmentsData = [];
     let trackDurationSec = 0;
     let baseOffsetSec = 0;
     let identifyTime = 0;
-    let speedRatio = 1.0;
+    let parsedLyrics = [];
 
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const statusDiv = document.getElementById('status');
     const realtimeBpmVal = document.getElementById('realtimeBpmVal');
-    const originalBpmVal = document.getElementById('originalBpmVal');
     const lyricsBox = document.getElementById('lyricsBox');
     const albumArt = document.getElementById('albumArt');
-    const syncRatioVal = document.getElementById('syncRatioVal');
-    const warnBox = document.getElementById('warnBox');
     const canvas = document.getElementById('energyCanvas');
     const ctx = canvas.getContext('2d');
 
@@ -211,37 +177,55 @@
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioCtx.createAnalyser();
         microphone = audioCtx.createMediaStreamSource(stream);
+
+        // 低周波（キックドラム成分 140Hz以下）を抽出するローパスフィルター
+        lowpassFilter = audioCtx.createBiquadFilter();
+        lowpassFilter.type = 'lowpass';
+        lowpassFilter.frequency.setValueAtTime(140, audioCtx.currentTime);
+
         scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
+        analyser.smoothingTimeConstant = 0.8;
+        analyser.fftSize = 512;
 
-        analyser.smoothingTimeConstant = 0.3;
-        analyser.fftSize = 1024;
-
-        microphone.connect(analyser);
+        microphone.connect(lowpassFilter);
+        lowpassFilter.connect(analyser);
         analyser.connect(scriptNode);
         scriptNode.connect(audioCtx.destination);
 
-        let threshold = 0.15;
+        let energyHistory = [];
         scriptNode.onaudioprocess = () => {
           const array = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(array);
           
           let sum = 0;
-          for (let i = 0; i < 10; i++) sum += array[i];
-          let average = sum / 10 / 255;
+          for (let i = 0; i < array.length; i++) sum += array[i];
+          let currentEnergy = sum / array.length;
+
+          energyHistory.push(currentEnergy);
+          if (energyHistory.length > 30) energyHistory.shift();
+          const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          if (average > threshold && (now - lastBeatTime) > 300) {
+          // 動的閾値によるピーク検知
+          if (currentEnergy > avgEnergy * 1.35 && currentEnergy > 15 && (now - lastBeatTime) > 320) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
-              beatIntervals.push(interval);
-              if (beatIntervals.length > 8) beatIntervals.shift();
-              
-              const avgInterval = beatIntervals.reduce((a, b) => a + b) / beatIntervals.length;
-              const calculated = Math.round(60000 / avgInterval);
-              if (calculated >= 60 && calculated <= 190) {
-                realtimeBpm = calculated;
+              if (interval >= 330 && interval <= 1000) { // BPM 60 ~ 180の範囲
+                beatIntervals.push(interval);
+                if (beatIntervals.length > 10) beatIntervals.shift();
+                
+                // メディアン（中央値）フィルタで外れ値を除去してBPMを安定化
+                const sorted = [...beatIntervals].sort((a, b) => a - b);
+                const medianInterval = sorted[Math.floor(sorted.length / 2)];
+                const calculated = Math.round(60000 / medianInterval);
+
+                if (!realtimeBpm) {
+                  realtimeBpm = calculated;
+                } else {
+                  // スルーレート制限（急激な変化を抑えてスムーズに追従）
+                  realtimeBpm = Math.round(realtimeBpm * 0.7 + calculated * 0.3);
+                }
                 realtimeBpmVal.textContent = realtimeBpm;
-                updateScrollSync();
               }
             }
             lastBeatTime = now;
@@ -264,19 +248,6 @@
               document.getElementById('titleVal').textContent = data.title;
               document.getElementById('artistVal').textContent = data.artist;
               
-              if (data.spotifyError) {
-                warnBox.style.display = 'block';
-              } else {
-                warnBox.style.display = 'none';
-              }
-
-              if (data.apiBpm) {
-                originalBpm = data.apiBpm;
-                originalBpmVal.textContent = originalBpm;
-              } else {
-                originalBpmVal.textContent = '不明';
-              }
-
               if (data.albumArtUrl) {
                 albumArt.src = data.albumArtUrl;
                 albumArt.style.display = 'block';
@@ -284,23 +255,24 @@
                 albumArt.style.display = 'none';
               }
 
-              lyricsBox.textContent = data.lyrics;
-
-              // セグメントがない（Spotifyエラー等）場合のフォールバック擬似波形生成
-              if (!data.segments || data.segments.length === 0) {
-                segmentsData = generateFallbackSegments(data.trackDuration || 180);
+              // 歌詞データのパースとレンダリング
+              if (data.syncedLyrics) {
+                parsedLyrics = parseLrc(data.syncedLyrics);
+                renderSyncedLyrics(parsedLyrics);
               } else {
-                segmentsData = data.segments;
+                parsedLyrics = [];
+                lyricsBox.textContent = data.plainLyrics || '歌詞が見つかりませんでした。';
               }
+
+              segmentsData = (data.segments && data.segments.length > 0) 
+                ? data.segments 
+                : generateFallbackSegments(data.trackDuration || 180);
 
               trackDurationSec = data.trackDuration || 180;
               baseOffsetSec = data.playOffset || 0;
               identifyTime = performance.now();
 
-              updateScrollSync();
-              startAutoScroll();
-              renderEnergyGraph();
-
+              startSyncLoop();
               statusDiv.textContent = '解析完了（同期表示中）';
             } else {
               statusDiv.textContent = '楽曲が認識できませんでした。';
@@ -325,19 +297,102 @@
     stopBtn.addEventListener('click', () => {
       if (streamRef) streamRef.getTracks().forEach(t => t.stop());
       if (audioCtx) audioCtx.close();
-      if (scrollInterval) clearInterval(scrollInterval);
-      if (graphAnimId) cancelAnimationFrame(graphAnimId);
+      if (syncAnimId) cancelAnimationFrame(syncAnimId);
       startBtn.disabled = false;
       stopBtn.disabled = true;
       statusDiv.textContent = '停止しました。';
     });
 
-    // Spotifyデータがない場合の擬似エネルギーデータ生成
+    // LRCタイムスタンプ文字列のパース処理 ([00:12.34] -> 秒数)
+    function parseLrc(lrcText) {
+      const lines = lrcText.split('\n');
+      const result = [];
+      const timeExp = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
+
+      lines.forEach((line, index) => {
+        const match = timeExp.exec(line);
+        if (match) {
+          const min = parseInt(match[1]);
+          const sec = parseInt(match[2]);
+          const ms = parseFloat('0.' + match[3]);
+          const time = min * 60 + sec + ms;
+          const text = line.replace(timeExp, '').trim();
+          if (text) {
+            result.push({ time, text, index });
+          }
+        }
+      });
+      return result;
+    }
+
+    function renderSyncedLyrics(lyricsArray) {
+      lyricsBox.innerHTML = '';
+      lyricsArray.forEach((item, idx) => {
+        const div = document.createElement('div');
+        div.className = 'lyric-line';
+        div.id = `lyric-line-${idx}`;
+        div.textContent = item.text;
+        lyricsBox.appendChild(div);
+      });
+    }
+
+    // 再生位置と同期した歌詞ハイライト＆自動スクロールループ
+    function startSyncLoop() {
+      if (syncAnimId) cancelAnimationFrame(syncAnimId);
+
+      function loop() {
+        const elapsedSec = (performance.now() - identifyTime) / 1000;
+        const currentPosSec = baseOffsetSec + elapsedSec;
+
+        // 1. 波形グラフィック更新
+        drawEnergyGraph(currentPosSec);
+
+        // 2. 歌詞同期＆スクロール更新
+        if (parsedLyrics.length > 0) {
+          let activeIndex = -1;
+          for (let i = 0; i < parsedLyrics.length; i++) {
+            if (currentPosSec >= parsedLyrics[i].time) {
+              activeIndex = i;
+            } else {
+              break;
+            }
+          }
+
+          if (activeIndex !== -1) {
+            let currentActive = lyricsBox.querySelector('.lyric-line.active');
+            let targetElem = document.getElementById(`lyric-line-${activeIndex}`);
+
+            if (targetElem && currentActive !== targetElem) {
+              if (currentActive) currentActive.classList.remove('active');
+              targetElem.classList.add('active');
+
+              // 「現在行 ＋ 2行先」が歌詞表示エリア内に綺麗に収まるようにスクロール位置を補正
+              const targetAheadIndex = Math.min(activeIndex + 2, parsedLyrics.length - 1);
+              const targetAheadElem = document.getElementById(`lyric-line-${targetAheadIndex}`);
+              
+              if (targetAheadElem) {
+                const containerHeight = lyricsBox.clientHeight;
+                const aheadElemBottom = targetAheadElem.offsetTop + targetAheadElem.offsetHeight;
+                const desiredScrollTop = aheadElemBottom - containerHeight + 10;
+
+                if (lyricsBox.scrollTop < desiredScrollTop || lyricsBox.scrollTop > targetElem.offsetTop) {
+                  lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
+                }
+              }
+            }
+          }
+        }
+
+        syncAnimId = requestAnimationFrame(loop);
+      }
+
+      loop();
+    }
+
     function generateFallbackSegments(duration) {
       const segs = [];
       const step = 2;
       for (let t = 0; t < duration; t += step) {
-        // サンプル的な盛り上がり波形
         const progress = t / duration;
         let loudness = -30 + Math.sin(progress * Math.PI * 4) * 15 + Math.random() * 5;
         segs.push({ start: t, duration: step, loudness: loudness });
@@ -345,69 +400,38 @@
       return segs;
     }
 
-    function updateScrollSync() {
-      const basePx = 0.8;
-      if (originalBpm && realtimeBpm && originalBpm > 0) {
-        speedRatio = realtimeBpm / originalBpm;
-        currentScrollSpeed = basePx * speedRatio;
-        syncRatioVal.textContent = `${speedRatio.toFixed(2)}x (BPM同期中)`;
-      } else {
-        speedRatio = 1.0;
-        currentScrollSpeed = basePx;
-        syncRatioVal.textContent = `1.00x (標準速度)`;
-      }
-    }
+    function drawEnergyGraph(currentPosSec) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    function startAutoScroll() {
-      if (scrollInterval) clearInterval(scrollInterval);
-      scrollInterval = setInterval(() => {
-        lyricsBox.scrollTop += currentScrollSpeed;
-      }, 50);
-    }
+      if (segmentsData.length > 0 && trackDurationSec > 0) {
+        segmentsData.forEach(seg => {
+          const x = (seg.start / trackDurationSec) * canvas.width;
+          const w = Math.max(1.5, (seg.duration / trackDurationSec) * canvas.width);
+          const normLoudness = Math.max(0, Math.min(1, (seg.loudness + 60) / 60));
+          const h = normLoudness * canvas.height;
+          const y = canvas.height - h;
 
-    function renderEnergyGraph() {
-      if (graphAnimId) cancelAnimationFrame(graphAnimId);
+          ctx.fillStyle = `rgba(29, 185, 84, ${0.3 + normLoudness * 0.7})`;
+          ctx.fillRect(x, y, w, h);
+        });
 
-      function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const markerX = (currentPosSec / trackDurationSec) * canvas.width;
+        if (markerX <= canvas.width) {
+          ctx.strokeStyle = '#ff3b30';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(markerX, 0);
+          ctx.lineTo(markerX, canvas.height);
+          ctx.stroke();
 
-        if (segmentsData.length > 0 && trackDurationSec > 0) {
-          segmentsData.forEach(seg => {
-            const x = (seg.start / trackDurationSec) * canvas.width;
-            const w = Math.max(1.5, (seg.duration / trackDurationSec) * canvas.width);
-            const normLoudness = Math.max(0, Math.min(1, (seg.loudness + 60) / 60));
-            const h = normLoudness * canvas.height;
-            const y = canvas.height - h;
-
-            ctx.fillStyle = `rgba(29, 185, 84, ${0.3 + normLoudness * 0.7})`;
-            ctx.fillRect(x, y, w, h);
-          });
-
-          const elapsedSec = ((performance.now() - identifyTime) / 1000) * speedRatio;
-          const currentPosSec = baseOffsetSec + elapsedSec;
-          const markerX = (currentPosSec / trackDurationSec) * canvas.width;
-
-          if (markerX <= canvas.width) {
-            ctx.strokeStyle = '#ff3b30';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(markerX, 0);
-            ctx.lineTo(markerX, canvas.height);
-            ctx.stroke();
-
-            ctx.fillStyle = '#ff3b30';
-            ctx.beginPath();
-            ctx.moveTo(markerX - 4, 0);
-            ctx.lineTo(markerX + 4, 0);
-            ctx.lineTo(markerX, 6);
-            ctx.fill();
-          }
+          ctx.fillStyle = '#ff3b30';
+          ctx.beginPath();
+          ctx.moveTo(markerX - 4, 0);
+          ctx.lineTo(markerX + 4, 0);
+          ctx.lineTo(markerX, 6);
+          ctx.fill();
         }
-
-        graphAnimId = requestAnimationFrame(draw);
       }
-
-      draw();
     }
   </script>
 </body>
