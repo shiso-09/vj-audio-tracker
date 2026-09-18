@@ -220,14 +220,14 @@
       border-radius: 4px;
     }
     .lyric-line {
-      font-size: 1.15rem;
+      font-size: 1.3rem; /* 視認性向上のため大幅に拡大 */
       font-weight: 700;
       color: rgba(255, 255, 255, 0.35);
       line-height: 1.4;
       transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
       transform-origin: left center;
       filter: blur(0.5px);
-      white-space: pre-wrap; /* 同期なし歌詞の改行を正しく表示 */
+      white-space: pre-wrap; 
       word-break: break-all;
     }
     .lyric-line.passed {
@@ -236,7 +236,7 @@
     }
     .lyric-line.active {
       color: #ffffff;
-      font-size: 1.35rem;
+      font-size: 1.7rem; /* アクティブな歌詞をさらに強調して拡大 */
       font-weight: 900;
       transform: scale(1.02);
       filter: none;
@@ -283,7 +283,7 @@
       <div class="lyrics-section">
         <div class="section-title">LIVE SYNCED LYRICS</div>
         <div id="lyricsBox" class="lyrics-container">
-          <div class="lyric-line active" style="font-size: 1.0rem; color: #8e8e93;">
+          <div class="lyric-line active" style="font-size: 1.2rem; color: #8e8e93;">
             楽曲が識別されると歌詞が表示されます。
           </div>
         </div>
@@ -310,7 +310,7 @@
 
     let autoRefreshTimer = null;
     let isIdentifying = false;
-    const RECORD_DURATION_MS = 8000; // 認識レスポンス向上のため8秒に変更
+    const RECORD_DURATION_MS = 8000;
 
     const startBtn = document.getElementById('startBtn');
     const refreshBtn = document.getElementById('refreshBtn');
@@ -359,7 +359,8 @@
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          if (currentEnergy > avgEnergy * 1.20 && currentEnergy > 8 && (now - lastBeatTime) > 300) {
+          // スマホマイクでもBPMを拾いやすくするため、エネルギーの閾値を緩和(1.20 -> 1.15, 8 -> 4)
+          if (currentEnergy > avgEnergy * 1.15 && currentEnergy > 4 && (now - lastBeatTime) > 300) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
               if (interval >= 330 && interval <= 1000) {
@@ -377,7 +378,6 @@
                   realtimeBpm = Math.round(realtimeBpm * 0.75 + calculated * 0.25);
                 }
                 
-                // SpotifyのBPMがまだ取得できていない場合のみ表示
                 if (realtimeBpmVal.textContent === '--' || realtimeBpmVal.textContent === 'undefined') {
                    realtimeBpmVal.textContent = realtimeBpm;
                 }
@@ -452,7 +452,6 @@
             document.getElementById('titleVal').textContent = data.title;
             document.getElementById('artistVal').textContent = data.artist;
             
-            // Spotifyの正確なBPMを優先的に表示
             if (data.bpm) {
               realtimeBpmVal.textContent = data.bpm;
             }
@@ -470,8 +469,7 @@
               renderSyncedLyrics(parsedLyrics);
             } else {
               parsedLyrics = [];
-              // 同期情報がない歌詞の場合、改行を維持して表示
-              lyricsBox.innerHTML = `<div class="lyric-line active" style="font-size:1.0rem;">${data.plainLyrics || '歌詞が見つかりませんでした。'}</div>`;
+              lyricsBox.innerHTML = `<div class="lyric-line active" style="font-size:1.2rem;">${data.plainLyrics || '歌詞が見つかりませんでした。'}</div>`;
             }
 
             segmentsData = (data.segments && data.segments.length > 0) 
@@ -565,8 +563,8 @@
                 }
               });
 
-              const containerHeight = lyricsBox.clientHeight;
-              const desiredScrollTop = targetElem.offsetTop - (containerHeight / 2) + (targetElem.clientHeight / 2);
+              // アクティブな行が上から約60px（過ぎた歌詞が1行だけ見える位置）に来るようにスクロール
+              const desiredScrollTop = targetElem.offsetTop - 60;
               lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
             }
           }
