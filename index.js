@@ -44,8 +44,9 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
     // 2. Spotify API (BPM, Audio Analysis, アートワーク画像)
     let apiBpm = null;
     let energySegments = [];
-    let trackDuration = 0;
+    let trackDuration = 180;
     let albumArtUrl = null;
+    let spotifyError = false;
 
     try {
       const spotifyApi = new SpotifyWebApi({
@@ -61,18 +62,15 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
         const trackId = trackObj.id;
         trackDuration = trackObj.duration_ms / 1000;
 
-        // アートワーク画像URLを取得
         if (trackObj.album && trackObj.album.images && trackObj.album.images.length > 0) {
           albumArtUrl = trackObj.album.images[0].url;
         }
 
-        // BPM取得
         const audioFeatures = await spotifyApi.getAudioFeaturesForTrack(trackId);
         if (audioFeatures.body && audioFeatures.body.tempo) {
           apiBpm = Math.round(audioFeatures.body.tempo);
         }
 
-        // オーディオ分析（構造）取得
         const audioAnalysis = await spotifyApi.getAudioAnalysisForTrack(trackId);
         if (audioAnalysis.body && audioAnalysis.body.segments) {
           energySegments = audioAnalysis.body.segments.map(s => ({
@@ -83,21 +81,37 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
         }
       }
     } catch (err) {
-      console.log('Spotify lookup fallback:', err);
+      console.error('Spotify API Error:', err.message);
+      spotifyError = true;
     }
 
-    // 3. 歌詞の自動取得
+    // 3. 歌詞取得 (LRCLIB API)
     let lyrics = '歌詞が見つかりませんでした。';
     try {
-      const lyricRes = await fetch(`https://lyrist.vercel.app/api/${encodeURIComponent(title)}/${encodeURIComponent(artist)}`);
-      if (lyricRes.ok) {
-        const lyricData = await lyricRes.json();
-        if (lyricData && lyricData.lyrics) {
-          lyrics = lyricData.lyrics;
+      const lrcGetUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`;
+      let lrcRes = await fetch(lrcGetUrl);
+      
+      if (!lrcRes.ok) {
+        // バックアップ検索
+        const lrcSearchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(title + ' ' + artist)}`;
+        lrcRes = await fetch(lrcSearchUrl);
+        if (lrcRes.ok) {
+          const searchData = await lrcRes.json();
+          if (Array.isArray(searchData) && searchData.length > 0) {
+            lyrics = searchData[0].plainLyrics || searchData[0].syncedLyrics || lyrics;
+          }
         }
+      } else {
+        const lrcData = await lrcRes.json();
+        lyrics = lrcData.plainLyrics || lrcData.syncedLyrics || lyrics;
       }
     } catch (e) {
-      console.log('Lyrics fetch failed:', e);
+      console.error('Lyrics fetch failed:', e);
+    }
+
+    // タイムスタンプ([00:12.34])のクリーンアップ処理
+    if (lyrics && lyrics.includes('[')) {
+      lyrics = lyrics.replace(/\[\d{2}:\d{2}\.\d{2,3}\]/g, '').trim();
     }
 
     res.json({
@@ -109,7 +123,8 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
       playOffset: playOffset,
       trackDuration: trackDuration,
       segments: energySegments,
-      albumArtUrl: albumArtUrl
+      albumArtUrl: albumArtUrl,
+      spotifyError: spotifyError
     });
 
   } catch (error) {
