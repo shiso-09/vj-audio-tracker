@@ -156,25 +156,34 @@
       gap: 4px;
       background: rgba(29, 185, 84, 0.15);
       border: 1px solid rgba(29, 185, 84, 0.4);
-      padding: 15px;
-      border-radius: 20px;
+      padding: 12px;
+      border-radius: 16px;
       margin: 0 auto;
       width: 100%;
-      max-width: 250px;
+      max-width: 200px;
       box-shadow: 0 4px 15px rgba(29, 185, 84, 0.1);
     }
     .bpm-label {
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       color: #1db954;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 2px;
+      letter-spacing: 1px;
     }
     .bpm-val {
-      font-size: 3.5rem;
+      font-size: 2.2rem;
       font-weight: 900;
       color: #1db954;
       line-height: 1;
+      transition: all 0.1s ease-out;
+    }
+    /* ビート検知時のアニメーション */
+    @keyframes pulse-beat {
+      0% { transform: scale(1.1); text-shadow: 0 0 20px #1db954; }
+      100% { transform: scale(1); text-shadow: none; }
+    }
+    .beat-pulse {
+      animation: pulse-beat 0.15s ease-out;
     }
 
     .graph-section {
@@ -243,7 +252,7 @@
     }
     .lyric-line.active {
       color: #ffffff;
-      font-size: 1.6rem;
+      font-size: 1.5rem;
       font-weight: 900;
       transform: scale(1.02);
       filter: none;
@@ -276,7 +285,7 @@
       </div>
 
       <div class="bpm-badge">
-        <span class="bpm-label">BPM</span>
+        <span class="bpm-label">Live BPM</span>
         <span id="realtimeBpmVal" class="bpm-val">--</span>
       </div>
 
@@ -290,7 +299,7 @@
       <div class="lyrics-section">
         <div class="section-title">LIVE SYNCED LYRICS</div>
         <div id="lyricsBox" class="lyrics-container">
-          <div class="lyric-line active" style="font-size: 1.2rem; color: #8e8e93;">
+          <div class="lyric-line active" style="font-size: 1.1rem; color: #8e8e93;">
             楽曲が識別されると歌詞が表示されます。
           </div>
         </div>
@@ -308,7 +317,6 @@
     let realtimeBpm = null;
     let lastStableBpm = null;
     let bpmChangeCounter = 0;
-    let spotifyBpm = null; 
 
     let segmentsData = [];
     let trackDurationSec = 0;
@@ -354,6 +362,8 @@
         scriptNode.connect(audioCtx.destination);
 
         let energyHistory = [];
+        
+        // --- 完全に独立したリアルタイムBPM解析ロジック ---
         scriptNode.onaudioprocess = () => {
           const array = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(array);
@@ -367,10 +377,11 @@
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          if (currentEnergy > avgEnergy * 1.15 && currentEnergy > 4 && (now - lastBeatTime) > 300) {
+          // 検知感度を上げ、確実にBPMを拾うように調整
+          if (currentEnergy > avgEnergy * 1.1 && currentEnergy > 1.5 && (now - lastBeatTime) > 300) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
-              if (interval >= 330 && interval <= 1000) {
+              if (interval >= 330 && interval <= 1000) { // 60BPM ~ 180BPMの範囲
                 beatIntervals.push(interval);
                 if (beatIntervals.length > 10) beatIntervals.shift();
                 
@@ -382,14 +393,19 @@
                   realtimeBpm = calculated;
                   lastStableBpm = calculated;
                 } else {
-                  realtimeBpm = Math.round(realtimeBpm * 0.75 + calculated * 0.25);
+                  // スムージングをかけて数値を安定させる
+                  realtimeBpm = Math.round(realtimeBpm * 0.8 + calculated * 0.2);
                 }
                 
-                // 【修正箇所】APIの結果に関わらず、マイクから取れたリアルタイムBPMを常に画面に反映する
-                if (realtimeBpm) {
-                   realtimeBpmVal.textContent = realtimeBpm;
-                }
+                // 【重要】API通信の状態に関わらず、毎回強制的にDOMを更新
+                realtimeBpmVal.textContent = realtimeBpm;
 
+                // ビート検知の瞬間にCSSアニメーションをトリガー
+                realtimeBpmVal.classList.remove('beat-pulse');
+                void realtimeBpmVal.offsetWidth; // リフローを強制してアニメーションを再起動
+                realtimeBpmVal.classList.add('beat-pulse');
+
+                // 大きなBPM変化があれば再識別を促す
                 if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
                   bpmChangeCounter++;
                   if (bpmChangeCounter >= 4) {
@@ -460,13 +476,8 @@
             document.getElementById('titleVal').textContent = data.title;
             document.getElementById('artistVal').textContent = data.artist;
             
-            if (data.bpm) {
-              spotifyBpm = data.bpm;
-              // マイクがBPMを拾えていない初期状態の場合のみ、APIのBPMを表示する
-              if (!realtimeBpm) {
-                 realtimeBpmVal.textContent = spotifyBpm;
-              }
-            }
+            // 【変更点】APIから取得したBPMをrealtimeBpmValに上書きする処理を完全削除
+            // 画面のBPM表示はマイクからの算出値のみに依存します。
 
             if (data.albumArtUrl) {
               albumArt.src = data.albumArtUrl;
@@ -481,7 +492,7 @@
               renderSyncedLyrics(parsedLyrics);
             } else {
               parsedLyrics = [];
-              lyricsBox.innerHTML = `<div class="lyric-line active" style="font-size:1.2rem;">${data.plainLyrics || '歌詞が見つかりませんでした。'}</div>`;
+              lyricsBox.innerHTML = `<div class="lyric-line active" style="font-size:1.1rem;">${data.plainLyrics || '歌詞が見つかりませんでした。'}</div>`;
             }
 
             segmentsData = (data.segments && data.segments.length > 0) 
@@ -575,7 +586,8 @@
                 }
               });
 
-              const desiredScrollTop = targetElem.offsetTop - 40;
+              // ハイライト部分を下げ、アクティブな歌詞がコンテナの中央付近に来るように調整
+              const desiredScrollTop = targetElem.offsetTop - 100;
               lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
             }
           }
