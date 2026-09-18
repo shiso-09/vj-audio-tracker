@@ -16,27 +16,13 @@ const acr = new ACRcloud({
   access_secret: process.env.ACR_SECRET_KEY,
 });
 
-const spotifyApi = new SpotifyWebApi({
-  clientId: process.env.SPOTIFY_CLIENT_ID,
-  clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
-});
-
-async function getSpotifyToken() {
-  try {
-    const data = await spotifyApi.clientCredentialsGrant();
-    spotifyApi.setAccessToken(data.body['access_token']);
-  } catch (err) {
-    console.error('Spotify token error:', err);
-  }
-}
-
 app.post('/api/identify', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: '音声データがありません' });
     }
 
-    // 1. ACRCloudで楽曲認識 (Parseエラーを修正)
+    // 1. ACRCloudで楽曲認識
     const result = await acr.identify(req.file.buffer);
     const metadata = typeof result === 'string' ? JSON.parse(result) : result;
 
@@ -54,22 +40,28 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
     const title = track.title;
     const artist = track.artists ? track.artists[0].name : 'Unknown';
 
-    // 2. Spotify APIでBPM情報を検索
-    await getSpotifyToken();
-    const spotifySearch = await spotifyApi.searchTracks(`track:${title} artist:${artist}`);
-    
+    // 2. Spotify API処理
     let bpm = '不明';
+    try {
+      const spotifyApi = new SpotifyWebApi({
+        clientId: process.env.SPOTIFY_CLIENT_ID,
+        clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+      });
 
-    if (spotifySearch.body.tracks && spotifySearch.body.tracks.items.length > 0) {
-      const trackId = spotifySearch.body.tracks.items[0].id;
-      try {
+      const tokenData = await spotifyApi.clientCredentialsGrant();
+      spotifyApi.setAccessToken(tokenData.body['access_token']);
+
+      const spotifySearch = await spotifyApi.searchTracks(`track:${title} artist:${artist}`);
+      
+      if (spotifySearch.body.tracks && spotifySearch.body.tracks.items.length > 0) {
+        const trackId = spotifySearch.body.tracks.items[0].id;
         const audioFeatures = await spotifyApi.getAudioFeaturesForTrack(trackId);
         if (audioFeatures.body && audioFeatures.body.tempo) {
           bpm = Math.round(audioFeatures.body.tempo);
         }
-      } catch (e) {
-        console.log('BPM取得エラー:', e);
       }
+    } catch (spotifyErr) {
+      console.error('Spotify API Error:', spotifyErr);
     }
 
     res.json({
