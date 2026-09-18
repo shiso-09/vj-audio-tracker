@@ -320,7 +320,7 @@
     let segmentsData = [];
     let trackDurationSec = 0;
     let baseOffsetSec = 0;
-    let recordStartTime = 0;
+    let recordEndTime = 0; // 【修正】計算の基準を録音完了時に変更
     let parsedLyrics = [];
 
     let autoRefreshTimer = null;
@@ -340,12 +340,18 @@
 
     startBtn.addEventListener('click', async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // 【修正】iPhone（iOS）の自動音量調整やノイズキャンセリングを強制オフにして生のキックを拾う
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: false,
+            autoGainControl: false,
+            noiseSuppression: false
+          } 
+        });
         streamRef = stream;
         
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         
-        // iOS Safari対策：AudioContextを確実に起動させる
         if (audioCtx.state === 'suspended') {
           await audioCtx.resume();
         }
@@ -373,8 +379,8 @@
           analyser.getByteFrequencyData(array);
           
           let sum = 0;
-          // 【修正】無音になった高音域を除外。低音域（最初の15ビン）のみで音量を計算
-          const limit = Math.min(15, array.length);
+          // より低音（キックドラムの帯域）だけに限定して音量を計算
+          const limit = Math.min(8, array.length); 
           for (let i = 0; i < limit; i++) {
             sum += array[i];
           }
@@ -386,8 +392,8 @@
 
           const now = performance.now();
           
-          // 【修正】計算式が正常になったため、閾値を実用的な数値(20)に設定
-          if (currentEnergy > avgEnergy * 1.15 && currentEnergy > 20 && (now - lastBeatTime) > 300) {
+          // AGCをオフにしたため、無音時のノイズを無視しつつキックの跳ね上がり(1.2倍)を検知
+          if (currentEnergy > avgEnergy * 1.2 && currentEnergy > 2 && (now - lastBeatTime) > 300) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
               if (interval >= 330 && interval <= 1000) { 
@@ -466,9 +472,10 @@
       mediaRecorder = new MediaRecorder(streamRef);
       mediaRecorder.ondataavailable = e => chunks.push(e.data);
       
-      recordStartTime = performance.now();
-      
       mediaRecorder.onstop = async () => {
+        // 【修正】計算の基準時間を「録音開始時」から「録音完了時」へシフト。これで8秒分のズレが直る
+        recordEndTime = performance.now(); 
+
         const blob = new Blob(chunks, { type: 'audio/wav' });
         const formData = new FormData();
         formData.append('audio', blob, 'audio.wav');
@@ -557,7 +564,7 @@
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
 
       function loop() {
-        const elapsedSec = (performance.now() - recordStartTime) / 1000;
+        const elapsedSec = (performance.now() - recordEndTime) / 1000;
         const currentPosSec = baseOffsetSec + elapsedSec;
 
         drawEnergyGraph(currentPosSec);
