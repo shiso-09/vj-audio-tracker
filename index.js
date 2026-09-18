@@ -39,41 +39,81 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
     const track = metadata.metadata.music[0];
     const title = track.title;
     const artist = track.artists ? track.artists[0].name : 'Unknown';
+    const playOffset = (track.play_offset_ms || 0) / 1000;
 
-    // 2. Spotify API処理
-    let bpm = '不明';
+    // 2. Spotify API (BPM, Audio Analysis, アートワーク画像)
+    let apiBpm = null;
+    let energySegments = [];
+    let trackDuration = 0;
+    let albumArtUrl = null;
+
     try {
       const spotifyApi = new SpotifyWebApi({
         clientId: process.env.SPOTIFY_CLIENT_ID,
         clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
       });
-
       const tokenData = await spotifyApi.clientCredentialsGrant();
       spotifyApi.setAccessToken(tokenData.body['access_token']);
 
       const spotifySearch = await spotifyApi.searchTracks(`track:${title} artist:${artist}`);
-      
       if (spotifySearch.body.tracks && spotifySearch.body.tracks.items.length > 0) {
-        const trackId = spotifySearch.body.tracks.items[0].id;
+        const trackObj = spotifySearch.body.tracks.items[0];
+        const trackId = trackObj.id;
+        trackDuration = trackObj.duration_ms / 1000;
+
+        // アートワーク画像URLを取得
+        if (trackObj.album && trackObj.album.images && trackObj.album.images.length > 0) {
+          albumArtUrl = trackObj.album.images[0].url;
+        }
+
+        // BPM取得
         const audioFeatures = await spotifyApi.getAudioFeaturesForTrack(trackId);
         if (audioFeatures.body && audioFeatures.body.tempo) {
-          bpm = Math.round(audioFeatures.body.tempo);
+          apiBpm = Math.round(audioFeatures.body.tempo);
+        }
+
+        // オーディオ分析（構造）取得
+        const audioAnalysis = await spotifyApi.getAudioAnalysisForTrack(trackId);
+        if (audioAnalysis.body && audioAnalysis.body.segments) {
+          energySegments = audioAnalysis.body.segments.map(s => ({
+            start: s.start,
+            duration: s.duration,
+            loudness: s.loudness_max
+          }));
         }
       }
-    } catch (spotifyErr) {
-      console.error('Spotify API Error:', spotifyErr);
+    } catch (err) {
+      console.log('Spotify lookup fallback:', err);
+    }
+
+    // 3. 歌詞の自動取得
+    let lyrics = '歌詞が見つかりませんでした。';
+    try {
+      const lyricRes = await fetch(`https://lyrist.vercel.app/api/${encodeURIComponent(title)}/${encodeURIComponent(artist)}`);
+      if (lyricRes.ok) {
+        const lyricData = await lyricRes.json();
+        if (lyricData && lyricData.lyrics) {
+          lyrics = lyricData.lyrics;
+        }
+      }
+    } catch (e) {
+      console.log('Lyrics fetch failed:', e);
     }
 
     res.json({
       success: true,
       title: title,
       artist: artist,
-      bpm: bpm,
-      searchLyricsUrl: `https://www.google.com/search?q=${encodeURIComponent(title + ' ' + artist + ' 歌詞')}`
+      apiBpm: apiBpm,
+      lyrics: lyrics,
+      playOffset: playOffset,
+      trackDuration: trackDuration,
+      segments: energySegments,
+      albumArtUrl: albumArtUrl
     });
 
   } catch (error) {
-    console.error('Error handling request:', error);
+    console.error('Error:', error);
     res.status(500).json({ error: 'サーバー内でエラーが発生しました。' });
   }
 });
