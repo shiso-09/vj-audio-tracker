@@ -22,7 +22,7 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: '音声データがありません' });
     }
 
-    // 1. ACRCloudで楽曲認識
+    // 1. ACRCloudで楽曲識別
     const result = await acr.identify(req.file.buffer);
     const metadata = typeof result === 'string' ? JSON.parse(result) : result;
 
@@ -41,13 +41,11 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
     const artist = track.artists ? track.artists[0].name : 'Unknown';
     const playOffset = (track.play_offset_ms || 0) / 1000;
 
-    // 2. Spotify API (BPM, Audio Analysis, アートワーク画像)
-    let apiBpm = null;
     let energySegments = [];
     let trackDuration = 180;
     let albumArtUrl = null;
-    let spotifyError = false;
 
+    // 2. Spotify API（オーディオ解析・アートワーク取得）
     try {
       const spotifyApi = new SpotifyWebApi({
         clientId: process.env.SPOTIFY_CLIENT_ID,
@@ -59,19 +57,13 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
       const spotifySearch = await spotifyApi.searchTracks(`track:${title} artist:${artist}`);
       if (spotifySearch.body.tracks && spotifySearch.body.tracks.items.length > 0) {
         const trackObj = spotifySearch.body.tracks.items[0];
-        const trackId = trackObj.id;
         trackDuration = trackObj.duration_ms / 1000;
 
         if (trackObj.album && trackObj.album.images && trackObj.album.images.length > 0) {
           albumArtUrl = trackObj.album.images[0].url;
         }
 
-        const audioFeatures = await spotifyApi.getAudioFeaturesForTrack(trackId);
-        if (audioFeatures.body && audioFeatures.body.tempo) {
-          apiBpm = Math.round(audioFeatures.body.tempo);
-        }
-
-        const audioAnalysis = await spotifyApi.getAudioAnalysisForTrack(trackId);
+        const audioAnalysis = await spotifyApi.getAudioAnalysisForTrack(trackObj.id);
         if (audioAnalysis.body && audioAnalysis.body.segments) {
           energySegments = audioAnalysis.body.segments.map(s => ({
             start: s.start,
@@ -82,49 +74,60 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
       }
     } catch (err) {
       console.error('Spotify API Error:', err.message);
-      spotifyError = true;
     }
 
-    // 3. 歌詞取得 (LRCLIB API)
-    let lyrics = '歌詞が見つかりませんでした。';
+    // 3. アートワークのフォールバック (iTunes Search API)
+    if (!albumArtUrl) {
+      try {
+        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(title + ' ' + artist)}&limit=1&entity=song`);
+        if (itunesRes.ok) {
+          const itunesData = await itunesRes.json();
+          if (itunesData.results && itunesData.results.length > 0 && itunesData.results[0].artworkUrl100) {
+            albumArtUrl = itunesData.results[0].artworkUrl100.replace('100x100bb', '600x600bb');
+          }
+        }
+      } catch (e) {
+        console.error('iTunes API fetch failed:', e);
+      }
+    }
+
+    // 4. 歌詞取得 (LRCLIB API)
+    let syncedLyrics = null;
+    let plainLyrics = '歌詞が見つかりませんでした。';
+
     try {
       const lrcGetUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`;
       let lrcRes = await fetch(lrcGetUrl);
       
       if (!lrcRes.ok) {
-        // バックアップ検索
         const lrcSearchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(title + ' ' + artist)}`;
         lrcRes = await fetch(lrcSearchUrl);
         if (lrcRes.ok) {
           const searchData = await lrcRes.json();
           if (Array.isArray(searchData) && searchData.length > 0) {
-            lyrics = searchData[0].plainLyrics || searchData[0].syncedLyrics || lyrics;
+            syncedLyrics = searchData[0].syncedLyrics || null;
+            plainLyrics = searchData[0].plainLyrics || searchData[0].syncedLyrics || plainLyrics;
           }
         }
       } else {
         const lrcData = await lrcRes.json();
-        lyrics = lrcData.plainLyrics || lrcData.syncedLyrics || lyrics;
+        syncedLyrics = lrcData.syncedLyrics || null;
+        plainLyrics = lrcData.plainLyrics || lrcData.syncedLyrics || plainLyrics;
       }
     } catch (e) {
       console.error('Lyrics fetch failed:', e);
-    }
-
-    // タイムスタンプ([00:12.34])のクリーンアップ処理
-    if (lyrics && lyrics.includes('[')) {
-      lyrics = lyrics.replace(/\[\d{2}:\d{2}\.\d{2,3}\]/g, '').trim();
     }
 
     res.json({
       success: true,
       title: title,
       artist: artist,
-      apiBpm: apiBpm,
-      lyrics: lyrics,
+      syncedLyrics: syncedLyrics,
+      plainLyrics: plainLyrics,
       playOffset: playOffset,
       trackDuration: trackDuration,
       segments: energySegments,
-      albumArtUrl: albumArtUrl,
-      spotifyError: spotifyError
+      albumArtUrl: albumArtUrl
     });
 
   } catch (error) {
