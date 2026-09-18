@@ -284,7 +284,7 @@
       </div>
 
       <div class="bpm-badge">
-        <span class="bpm-label">Live BPM</span>
+        <span class="bpm-label">Live BPM (3s Update)</span>
         <span id="realtimeBpmVal" class="bpm-val">--</span>
       </div>
 
@@ -307,11 +307,10 @@
   </div>
 
   <script>
-    let audioCtx, analyser, microphone, lowpassFilter, scriptNode;
-    let lastBeatTime = 0;
-    let beatIntervals = [];
+    let audioCtx, analyser, microphone, lowpassFilter;
     let mediaRecorder, streamRef;
     let syncAnimId = null;
+    let trackAnimId = null;
 
     let realtimeBpm = null;
     let lastStableBpm = null;
@@ -322,6 +321,10 @@
     let baseOffsetSec = 0;
     let recordEndTime = 0; 
     let parsedLyrics = [];
+
+    // 3秒ごとのBPM計算用バッファ
+    let energyBuffer = [];
+    let lastBpmCalcTime = 0;
 
     let autoRefreshTimer = null;
     let isIdentifying = false;
@@ -350,7 +353,6 @@
         streamRef = stream;
         
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        
         if (audioCtx.state === 'suspended') {
           await audioCtx.resume();
         }
@@ -362,82 +364,44 @@
         lowpassFilter.type = 'lowpass';
         lowpassFilter.frequency.setValueAtTime(150, audioCtx.currentTime);
 
-        scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
         analyser.smoothingTimeConstant = 0.8;
         analyser.fftSize = 512;
 
         microphone.connect(lowpassFilter);
         lowpassFilter.connect(analyser);
-        analyser.connect(scriptNode);
-        scriptNode.connect(audioCtx.destination);
 
-        let energyHistory = [];
-        let previousEnergy = 0;
-        
-        scriptNode.onaudioprocess = () => {
+        energyBuffer = [];
+        lastBpmCalcTime = performance.now();
+
+        // 毎フレーム（約60fps）音量を記録し、3秒ごとに解析する独立ループ
+        const trackAudio = () => {
           const array = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(array);
           
           let sum = 0;
-          // 【極大修正】0Hz〜約250Hzの超低音（キックドラムの帯域）のみに制限し、スネアやボーカルを完全無視する
-          const limit = Math.min(3, array.length); 
+          // 超低音域（キックドラム帯域）のみを抽出
+          const limit = Math.min(4, array.length); 
           for (let i = 0; i < limit; i++) {
             sum += array[i];
           }
-          let currentEnergy = sum / limit;
-
-          energyHistory.push(currentEnergy);
-          if (energyHistory.length > 40) energyHistory.shift();
-          const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
-
+          const currentEnergy = sum / limit;
           const now = performance.now();
-          
-          // 【極大修正】音が急に立ち上がった瞬間（ピーク）のみをビートとする
-          const isPeak = currentEnergy > previousEnergy && currentEnergy > avgEnergy * 1.35 && currentEnergy > 15;
-          previousEnergy = currentEnergy;
 
-          // インターバルを330ms(最大約181BPM)に制限し、8分音符の誤検知を防ぐ
-          if (isPeak && (now - lastBeatTime) > 330) {
-            if (lastBeatTime > 0) {
-              const interval = now - lastBeatTime;
-              if (interval >= 330 && interval <= 1200) { 
-                beatIntervals.push(interval);
-                // 過去8回分のビートから中央値を算出（安定感アップ）
-                if (beatIntervals.length > 8) beatIntervals.shift();
-                
-                const sorted = [...beatIntervals].sort((a, b) => a - b);
-                const medianInterval = sorted[Math.floor(sorted.length / 2)];
-                const calculated = Math.round(60000 / medianInterval);
+          // バッファに時間とエネルギーを記録
+          energyBuffer.push({ time: now, energy: currentEnergy });
 
-                if (!realtimeBpm) {
-                  realtimeBpm = calculated;
-                  lastStableBpm = calculated;
-                } else {
-                  // 急な数値のブレを防ぐスムージング処理
-                  realtimeBpm = Math.round(realtimeBpm * 0.7 + calculated * 0.3);
-                }
-                
-                realtimeBpmVal.textContent = realtimeBpm;
-
-                realtimeBpmVal.classList.remove('beat-pulse');
-                void realtimeBpmVal.offsetWidth; 
-                realtimeBpmVal.classList.add('beat-pulse');
-
-                if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
-                  bpmChangeCounter++;
-                  if (bpmChangeCounter >= 4) {
-                    bpmChangeCounter = 0;
-                    lastStableBpm = realtimeBpm;
-                    triggerIdentify();
-                  }
-                } else {
-                  bpmChangeCounter = 0;
-                }
-              }
-            }
-            lastBeatTime = now;
+          // 3秒経過したらBPMを計算
+          if (now - lastBpmCalcTime >= 3000) {
+            calcBpm(energyBuffer);
+            // 計算が終わったら、過去1.5秒分だけ残して古い記録をリセット
+            energyBuffer = energyBuffer.filter(e => now - e.time < 1500);
+            lastBpmCalcTime = now;
           }
+          
+          trackAnimId = requestAnimationFrame(trackAudio);
         };
+        
+        trackAudio(); // ループ開始
 
         startBtn.disabled = true;
         refreshBtn.disabled = false;
@@ -463,12 +427,75 @@
       if (streamRef) streamRef.getTracks().forEach(t => t.stop());
       if (audioCtx) audioCtx.close();
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
+      if (trackAnimId) cancelAnimationFrame(trackAnimId);
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       startBtn.disabled = false;
       refreshBtn.disabled = true;
       stopBtn.disabled = true;
       statusDiv.textContent = '停止中';
     });
+
+    // --- 3秒ごとにBPMを算出する関数 ---
+    function calcBpm(buffer) {
+      if (buffer.length < 20) return;
+      
+      let avgEnergy = buffer.reduce((sum, b) => sum + b.energy, 0) / buffer.length;
+      
+      let peaks = [];
+      // バッファ全体から「周囲より高く、平均の1.15倍以上で、ある程度の音量がある」ピークをすべて抽出
+      for (let i = 1; i < buffer.length - 1; i++) {
+        if (buffer[i].energy > buffer[i-1].energy && 
+            buffer[i].energy > buffer[i+1].energy && 
+            buffer[i].energy > avgEnergy * 1.15 && 
+            buffer[i].energy > 5) {
+          peaks.push(buffer[i].time);
+        }
+      }
+
+      if (peaks.length >= 2) {
+        let intervals = [];
+        // 見つかったピーク同士の間隔（インターバル）を計算
+        for (let i = 1; i < peaks.length; i++) {
+          let interval = peaks[i] - peaks[i-1];
+          // 50BPM(1200ms) 〜 200BPM(300ms) の現実的な範囲の間隔のみ採用
+          if (interval >= 300 && interval <= 1200) { 
+            intervals.push(interval);
+          }
+        }
+
+        // 3秒間に見つかったインターバルの中央値をBPMとする
+        if (intervals.length > 0) {
+          intervals.sort((a,b) => a - b);
+          let median = intervals[Math.floor(intervals.length / 2)];
+          let calculated = Math.round(60000 / median);
+          
+          if (!realtimeBpm) {
+            realtimeBpm = calculated;
+            lastStableBpm = calculated;
+          } else {
+            // 急な変化を防ぐため、前回のBPMと今回のBPMを混ぜる（スムージング）
+            realtimeBpm = Math.round(realtimeBpm * 0.6 + calculated * 0.4);
+          }
+          
+          realtimeBpmVal.textContent = realtimeBpm;
+          realtimeBpmVal.classList.remove('beat-pulse');
+          void realtimeBpmVal.offsetWidth; 
+          realtimeBpmVal.classList.add('beat-pulse');
+
+          // BPMが大きく変わった場合は、楽曲が変わったと判断して再識別(3秒ごとなので2回連続で変わった場合)
+          if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
+            bpmChangeCounter++;
+            if (bpmChangeCounter >= 2) { 
+              bpmChangeCounter = 0;
+              lastStableBpm = realtimeBpm;
+              triggerIdentify();
+            }
+          } else {
+            bpmChangeCounter = 0;
+          }
+        }
+      }
+    }
 
     function triggerIdentify() {
       if (isIdentifying || !streamRef) return;
