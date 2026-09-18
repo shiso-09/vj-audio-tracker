@@ -22,7 +22,6 @@
       overflow-x: hidden;
       position: relative;
     }
-    /* 動的背景グラデーション効果 */
     .bg-blur {
       position: fixed;
       top: -20%;
@@ -88,6 +87,10 @@
       box-shadow: none;
       border: 1px solid rgba(255, 255, 255, 0.15);
     }
+    .btn-danger {
+      background: #e74c3c;
+      box-shadow: none;
+    }
     
     .status-text {
       font-size: 0.8rem;
@@ -96,7 +99,6 @@
       min-height: 1.2em;
     }
 
-    /* メインカード */
     .card {
       background: rgba(255, 255, 255, 0.05);
       backdrop-filter: blur(20px);
@@ -109,7 +111,6 @@
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     }
 
-    /* アートワーク & 曲情報 (横並び) */
     .track-header {
       display: flex;
       align-items: center;
@@ -146,7 +147,6 @@
       text-overflow: ellipsis;
     }
 
-    /* BPM表示 */
     .bpm-badge {
       display: inline-flex;
       align-items: baseline;
@@ -169,7 +169,6 @@
       color: #1db954;
     }
 
-    /* 波形表示 */
     .graph-section {
       display: flex;
       flex-direction: column;
@@ -194,7 +193,6 @@
       display: block;
     }
 
-    /* Apple Music / Spotify ライブ歌詞スタイル */
     .lyrics-section {
       display: flex;
       flex-direction: column;
@@ -228,12 +226,10 @@
       transform-origin: left center;
       filter: blur(0.5px);
     }
-    /* 歌い終わった過去行 */
     .lyric-line.passed {
       color: rgba(255, 255, 255, 0.6);
       filter: none;
     }
-    /* 現在歌唱中の行 (強力なハイライト) */
     .lyric-line.active {
       color: #ffffff;
       font-size: 1.5rem;
@@ -251,16 +247,15 @@
     <header>
       <h1>VJ Live Audio Sync</h1>
       <div class="btn-group">
-        <button id="startBtn">▶ トラッキング開始</button>
-        <button id="refreshBtn" class="btn-secondary" disabled>🔄 再識別</button>
-        <button id="stopBtn" style="background: #e74c3c;" disabled>■ 停止</button>
+        <button id="startBtn">トラッキング開始</button>
+        <button id="refreshBtn" class="btn-secondary" disabled>再識別</button>
+        <button id="stopBtn" class="btn-danger" disabled>停止</button>
       </div>
     </header>
 
     <div id="status" class="status-text">「トラッキング開始」を押してマイク解析を始動します</div>
 
     <div class="card">
-      <!-- アートワーク & 曲名（横並び） -->
       <div class="track-header">
         <img id="albumArt" class="album-art" src="" alt="Album Art">
         <div class="track-info">
@@ -269,13 +264,11 @@
         </div>
       </div>
 
-      <!-- リアルタイムBPM -->
       <div class="bpm-badge">
         <span class="bpm-label">Live BPM</span>
         <span id="realtimeBpmVal" class="bpm-val">--</span>
       </div>
 
-      <!-- 波形エネルギー -->
       <div class="graph-section">
         <div class="section-title">AUDIO STRUCTURE & TRACK POSITION</div>
         <div class="graph-container">
@@ -283,7 +276,6 @@
         </div>
       </div>
 
-      <!-- ライブ歌詞 -->
       <div class="lyrics-section">
         <div class="section-title">LIVE SYNCED LYRICS</div>
         <div id="lyricsBox" class="lyrics-container">
@@ -309,12 +301,12 @@
     let segmentsData = [];
     let trackDurationSec = 0;
     let baseOffsetSec = 0;
-    let identifyTime = 0;
+    let recordStartTime = 0; // 録音開始時のタイムスタンプ（タイムラグ補正用）
     let parsedLyrics = [];
 
     let autoRefreshTimer = null;
     let isIdentifying = false;
-    const RECORD_DURATION_MS = 10000; // 識別精度向上のため10秒間録音
+    const RECORD_DURATION_MS = 10000;
 
     const startBtn = document.getElementById('startBtn');
     const refreshBtn = document.getElementById('refreshBtn');
@@ -336,10 +328,9 @@
         analyser = audioCtx.createAnalyser();
         microphone = audioCtx.createMediaStreamSource(stream);
 
-        // キックドラム（低音成分）を狙い撃ちする 140Hz ローパスフィルター
         lowpassFilter = audioCtx.createBiquadFilter();
         lowpassFilter.type = 'lowpass';
-        lowpassFilter.frequency.setValueAtTime(140, audioCtx.currentTime);
+        lowpassFilter.frequency.setValueAtTime(150, audioCtx.currentTime); // 150Hzに調整
 
         scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
         analyser.smoothingTimeConstant = 0.8;
@@ -364,7 +355,8 @@
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          if (currentEnergy > avgEnergy * 1.35 && currentEnergy > 15 && (now - lastBeatTime) > 320) {
+          // BPMの判定閾値を緩和（拾いやすく調整）
+          if (currentEnergy > avgEnergy * 1.20 && currentEnergy > 8 && (now - lastBeatTime) > 300) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
               if (interval >= 330 && interval <= 1000) {
@@ -383,11 +375,9 @@
                 }
                 realtimeBpmVal.textContent = realtimeBpm;
 
-                // BPM急変（±15%以上の乖離が連続検知）による自動再識別トリガー
                 if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
                   bpmChangeCounter++;
-                  if (bpmChangeCounter >= 4) { // 約4ビート継続したら曲調変化と判定
-                    console.log('BPM/曲調変化を検知。自動再識別を実行します。');
+                  if (bpmChangeCounter >= 4) {
                     bpmChangeCounter = 0;
                     lastStableBpm = realtimeBpm;
                     triggerIdentify('BPM変化検知のため自動更新中...');
@@ -405,10 +395,8 @@
         refreshBtn.disabled = false;
         stopBtn.disabled = false;
 
-        // 初回識別実行
         triggerIdentify('マイク音声解析中 (10秒間)...');
 
-        // 1分間隔の定期自動更新タイマー設定
         autoRefreshTimer = setInterval(() => {
           triggerIdentify('定期自動更新中 (10秒間)...');
         }, 60000);
@@ -418,7 +406,6 @@
       }
     });
 
-    // 手動更新ボタン
     refreshBtn.addEventListener('click', () => {
       triggerIdentify('手動更新中 (10秒間)...');
     });
@@ -434,7 +421,6 @@
       statusDiv.textContent = 'トラッキングを停止しました。';
     });
 
-    // 10秒間のマイク録音と識別処理のリクエスト
     function triggerIdentify(statusMessage) {
       if (isIdentifying || !streamRef) return;
       isIdentifying = true;
@@ -443,6 +429,9 @@
       let chunks = [];
       mediaRecorder = new MediaRecorder(streamRef);
       mediaRecorder.ondataavailable = e => chunks.push(e.data);
+      
+      // 録音開始時点を基準時間として記録（タイムラグ補正の要）
+      recordStartTime = performance.now();
       
       mediaRecorder.onstop = async () => {
         statusDiv.textContent = '楽曲識別 & 構造解析中...';
@@ -480,7 +469,6 @@
 
             trackDurationSec = data.trackDuration || 180;
             baseOffsetSec = data.playOffset || 0;
-            identifyTime = performance.now();
 
             startSyncLoop();
             statusDiv.textContent = 'トラッキング中（1分毎・BPM変化時に自動更新）';
@@ -538,7 +526,8 @@
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
 
       function loop() {
-        const elapsedSec = (performance.now() - identifyTime) / 1000;
+        // API通信の時間を排除し、録音開始時からの経過時間で計算
+        const elapsedSec = (performance.now() - recordStartTime) / 1000;
         const currentPosSec = baseOffsetSec + elapsedSec;
 
         drawEnergyGraph(currentPosSec);
@@ -557,7 +546,6 @@
             let targetElem = document.getElementById(`lyric-line-${activeIndex}`);
 
             if (targetElem && !targetElem.classList.contains('active')) {
-              // クラス状態の更新（過去行・現在行のグラデーション）
               parsedLyrics.forEach((_, idx) => {
                 const elem = document.getElementById(`lyric-line-${idx}`);
                 if (elem) {
@@ -570,19 +558,11 @@
                 }
               });
 
-              // 「現在行 ＋ 2行先」が歌詞ボックス内に収まるスクロール追従計算
-              const targetAheadIndex = Math.min(activeIndex + 2, parsedLyrics.length - 1);
-              const targetAheadElem = document.getElementById(`lyric-line-${targetAheadIndex}`);
-              
-              if (targetAheadElem) {
-                const containerHeight = lyricsBox.clientHeight;
-                const aheadElemBottom = targetAheadElem.offsetTop + targetAheadElem.offsetHeight;
-                const desiredScrollTop = aheadElemBottom - containerHeight + 16;
+              // ハイライト行が「表示エリアのど真ん中」に来るように計算
+              const containerHeight = lyricsBox.clientHeight;
+              const desiredScrollTop = targetElem.offsetTop - (containerHeight / 2) + (targetElem.clientHeight / 2);
 
-                if (lyricsBox.scrollTop < desiredScrollTop || lyricsBox.scrollTop > targetElem.offsetTop) {
-                  lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
-                }
-              }
+              lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
             }
           }
         }
