@@ -93,10 +93,11 @@
     }
     
     .status-text {
-      font-size: 0.8rem;
-      color: #a0a0a5;
+      font-size: 0.85rem;
+      color: #1db954;
       text-align: center;
       min-height: 1.2em;
+      font-weight: 600;
     }
 
     .card {
@@ -226,6 +227,8 @@
       transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
       transform-origin: left center;
       filter: blur(0.5px);
+      white-space: pre-wrap; /* 同期なし歌詞の改行を正しく表示 */
+      word-break: break-all;
     }
     .lyric-line.passed {
       color: rgba(255, 255, 255, 0.6);
@@ -254,19 +257,19 @@
       </div>
     </header>
 
-    <div id="status" class="status-text">「トラッキング開始」を押してマイク解析を始動します</div>
+    <div id="status" class="status-text">待機中</div>
 
     <div class="card">
       <div class="track-header">
         <img id="albumArt" class="album-art" src="" alt="Album Art">
         <div class="track-info">
-          <div id="titleVal" class="track-title">曲名未識別</div>
-          <div id="artistVal" class="track-artist">アーティスト未識別</div>
+          <div id="titleVal" class="track-title">未識別</div>
+          <div id="artistVal" class="track-artist">--</div>
         </div>
       </div>
 
       <div class="bpm-badge">
-        <span class="bpm-label">Live BPM</span>
+        <span class="bpm-label">BPM</span>
         <span id="realtimeBpmVal" class="bpm-val">--</span>
       </div>
 
@@ -281,7 +284,7 @@
         <div class="section-title">LIVE SYNCED LYRICS</div>
         <div id="lyricsBox" class="lyrics-container">
           <div class="lyric-line active" style="font-size: 1.0rem; color: #8e8e93;">
-            楽曲が識別されるとリアルタイム歌詞が表示されます。
+            楽曲が識別されると歌詞が表示されます。
           </div>
         </div>
       </div>
@@ -307,7 +310,7 @@
 
     let autoRefreshTimer = null;
     let isIdentifying = false;
-    const RECORD_DURATION_MS = 10000;
+    const RECORD_DURATION_MS = 8000; // 認識レスポンス向上のため8秒に変更
 
     const startBtn = document.getElementById('startBtn');
     const refreshBtn = document.getElementById('refreshBtn');
@@ -373,14 +376,18 @@
                 } else {
                   realtimeBpm = Math.round(realtimeBpm * 0.75 + calculated * 0.25);
                 }
-                realtimeBpmVal.textContent = realtimeBpm;
+                
+                // SpotifyのBPMがまだ取得できていない場合のみ表示
+                if (realtimeBpmVal.textContent === '--' || realtimeBpmVal.textContent === 'undefined') {
+                   realtimeBpmVal.textContent = realtimeBpm;
+                }
 
                 if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
                   bpmChangeCounter++;
                   if (bpmChangeCounter >= 4) {
                     bpmChangeCounter = 0;
                     lastStableBpm = realtimeBpm;
-                    triggerIdentify('BPM変化検知のため自動更新中...');
+                    triggerIdentify();
                   }
                 } else {
                   bpmChangeCounter = 0;
@@ -394,11 +401,12 @@
         startBtn.disabled = true;
         refreshBtn.disabled = false;
         stopBtn.disabled = false;
+        statusDiv.textContent = 'トラッキング実行中';
 
-        triggerIdentify('マイク音声解析中 (10秒間)...');
+        triggerIdentify();
 
         autoRefreshTimer = setInterval(() => {
-          triggerIdentify('定期自動更新中 (10秒間)...');
+          triggerIdentify();
         }, 60000);
 
       } catch (err) {
@@ -407,7 +415,7 @@
     });
 
     refreshBtn.addEventListener('click', () => {
-      triggerIdentify('手動更新中 (10秒間)...');
+      triggerIdentify();
     });
 
     stopBtn.addEventListener('click', () => {
@@ -418,14 +426,13 @@
       startBtn.disabled = false;
       refreshBtn.disabled = true;
       stopBtn.disabled = true;
-      statusDiv.textContent = 'トラッキングを停止しました。';
+      statusDiv.textContent = '停止中';
     });
 
-    function triggerIdentify(statusMessage) {
+    function triggerIdentify() {
       if (isIdentifying || !streamRef) return;
       isIdentifying = true;
 
-      statusDiv.textContent = statusMessage;
       let chunks = [];
       mediaRecorder = new MediaRecorder(streamRef);
       mediaRecorder.ondataavailable = e => chunks.push(e.data);
@@ -433,7 +440,6 @@
       recordStartTime = performance.now();
       
       mediaRecorder.onstop = async () => {
-        statusDiv.textContent = '楽曲識別 & 構造解析中...';
         const blob = new Blob(chunks, { type: 'audio/wav' });
         const formData = new FormData();
         formData.append('audio', blob, 'audio.wav');
@@ -446,6 +452,11 @@
             document.getElementById('titleVal').textContent = data.title;
             document.getElementById('artistVal').textContent = data.artist;
             
+            // Spotifyの正確なBPMを優先的に表示
+            if (data.bpm) {
+              realtimeBpmVal.textContent = data.bpm;
+            }
+
             if (data.albumArtUrl) {
               albumArt.src = data.albumArtUrl;
               albumArt.style.display = 'block';
@@ -459,6 +470,7 @@
               renderSyncedLyrics(parsedLyrics);
             } else {
               parsedLyrics = [];
+              // 同期情報がない歌詞の場合、改行を維持して表示
               lyricsBox.innerHTML = `<div class="lyric-line active" style="font-size:1.0rem;">${data.plainLyrics || '歌詞が見つかりませんでした。'}</div>`;
             }
 
@@ -470,12 +482,9 @@
             baseOffsetSec = data.playOffset || 0;
 
             startSyncLoop();
-            statusDiv.textContent = 'トラッキング中（1分毎・BPM変化時に自動更新）';
-          } else {
-            statusDiv.textContent = '楽曲が認識できませんでした。次回更新まで待機中...';
           }
         } catch (err) {
-          statusDiv.textContent = '識別エラーが発生しました。';
+          console.error('API Error:', err);
         } finally {
           isIdentifying = false;
         }
@@ -556,10 +565,8 @@
                 }
               });
 
-              // ハイライト部分が歌詞窓の中央に正確に位置するようにスクロール位置を再計算
               const containerHeight = lyricsBox.clientHeight;
               const desiredScrollTop = targetElem.offsetTop - (containerHeight / 2) + (targetElem.clientHeight / 2);
-
               lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
             }
           }
@@ -567,7 +574,6 @@
 
         syncAnimId = requestAnimationFrame(loop);
       }
-
       loop();
     }
 
