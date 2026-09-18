@@ -284,7 +284,7 @@
       </div>
 
       <div class="bpm-badge">
-        <span class="bpm-label">Live BPM (3s Update)</span>
+        <span class="bpm-label">Live BPM</span>
         <span id="realtimeBpmVal" class="bpm-val">--</span>
       </div>
 
@@ -307,10 +307,9 @@
   </div>
 
   <script>
-    let audioCtx, analyser, microphone, lowpassFilter;
+    let audioCtx, analyser, microphone, lowpassFilter, scriptNode;
     let mediaRecorder, streamRef;
     let syncAnimId = null;
-    let trackAnimId = null;
 
     let realtimeBpm = null;
     let lastStableBpm = null;
@@ -319,12 +318,8 @@
     let segmentsData = [];
     let trackDurationSec = 0;
     let baseOffsetSec = 0;
-    let recordEndTime = 0; 
+    let recordStartTime = 0; // 録音開始時を基準に戻し、歌詞のズレを解消
     let parsedLyrics = [];
-
-    // 3秒ごとのBPM計算用バッファ
-    let energyBuffer = [];
-    let lastBpmCalcTime = 0;
 
     let autoRefreshTimer = null;
     let isIdentifying = false;
@@ -343,13 +338,8 @@
 
     startBtn.addEventListener('click', async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: false,
-            autoGainControl: false,
-            noiseSuppression: false
-          } 
-        });
+        // iPhoneでの動作を安定させるため、標準のオーディオ設定に戻す（楽曲解析エラーの解消）
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         streamRef = stream;
         
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -362,46 +352,86 @@
 
         lowpassFilter = audioCtx.createBiquadFilter();
         lowpassFilter.type = 'lowpass';
-        lowpassFilter.frequency.setValueAtTime(150, audioCtx.currentTime);
+        lowpassFilter.frequency.value = 150;
 
+        scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
         analyser.smoothingTimeConstant = 0.8;
         analyser.fftSize = 512;
 
         microphone.connect(lowpassFilter);
         lowpassFilter.connect(analyser);
+        analyser.connect(scriptNode);
+        scriptNode.connect(audioCtx.destination); // 処理ループを維持
 
-        energyBuffer = [];
-        lastBpmCalcTime = performance.now();
-
-        // 毎フレーム（約60fps）音量を記録し、3秒ごとに解析する独立ループ
-        const trackAudio = () => {
+        let energyHistory = [];
+        let lastBeatTime = 0;
+        let intervalBuffer = [];
+        let lastBpmCalcTime = performance.now();
+        
+        scriptNode.onaudioprocess = () => {
           const array = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(array);
           
           let sum = 0;
-          // 超低音域（キックドラム帯域）のみを抽出
-          const limit = Math.min(4, array.length); 
+          // 低音域（0~約100Hz）を抽出してキックを拾う
+          const limit = Math.min(5, array.length); 
           for (let i = 0; i < limit; i++) {
             sum += array[i];
           }
-          const currentEnergy = sum / limit;
+          let currentEnergy = sum / limit;
+
+          energyHistory.push(currentEnergy);
+          if (energyHistory.length > 30) energyHistory.shift();
+          const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
+
           const now = performance.now();
+          
+          // ビート検知（1.25倍の盛り上がり かつ 最小音量10以上）
+          if (currentEnergy > avgEnergy * 1.25 && currentEnergy > 10 && (now - lastBeatTime) > 300) {
+            if (lastBeatTime > 0) {
+              const interval = now - lastBeatTime;
+              if (interval >= 330 && interval <= 1200) { // 50BPM 〜 180BPM
+                intervalBuffer.push(interval);
+              }
+            }
+            lastBeatTime = now;
+          }
 
-          // バッファに時間とエネルギーを記録
-          energyBuffer.push({ time: now, energy: currentEnergy });
-
-          // 3秒経過したらBPMを計算
+          // 【3秒ごとの画面更新ロジック】
           if (now - lastBpmCalcTime >= 3000) {
-            calcBpm(energyBuffer);
-            // 計算が終わったら、過去1.5秒分だけ残して古い記録をリセット
-            energyBuffer = energyBuffer.filter(e => now - e.time < 1500);
+            if (intervalBuffer.length >= 2) {
+              const sorted = [...intervalBuffer].sort((a, b) => a - b);
+              const medianInterval = sorted[Math.floor(sorted.length / 2)];
+              const calculated = Math.round(60000 / medianInterval);
+
+              if (!realtimeBpm) {
+                realtimeBpm = calculated;
+                lastStableBpm = calculated;
+              } else {
+                realtimeBpm = Math.round(realtimeBpm * 0.7 + calculated * 0.3); // スムージング
+              }
+              
+              realtimeBpmVal.textContent = realtimeBpm;
+              realtimeBpmVal.classList.remove('beat-pulse');
+              void realtimeBpmVal.offsetWidth; 
+              realtimeBpmVal.classList.add('beat-pulse');
+
+              if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
+                bpmChangeCounter++;
+                if (bpmChangeCounter >= 2) {
+                  bpmChangeCounter = 0;
+                  lastStableBpm = realtimeBpm;
+                  triggerIdentify(); // BPMが大きく変わったら楽曲再識別
+                }
+              } else {
+                bpmChangeCounter = 0;
+              }
+            }
+            // 3秒経過したらバッファをリセットし、常に最新のテンポを取得
+            intervalBuffer = [];
             lastBpmCalcTime = now;
           }
-          
-          trackAnimId = requestAnimationFrame(trackAudio);
         };
-        
-        trackAudio(); // ループ開始
 
         startBtn.disabled = true;
         refreshBtn.disabled = false;
@@ -427,75 +457,12 @@
       if (streamRef) streamRef.getTracks().forEach(t => t.stop());
       if (audioCtx) audioCtx.close();
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
-      if (trackAnimId) cancelAnimationFrame(trackAnimId);
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       startBtn.disabled = false;
       refreshBtn.disabled = true;
       stopBtn.disabled = true;
       statusDiv.textContent = '停止中';
     });
-
-    // --- 3秒ごとにBPMを算出する関数 ---
-    function calcBpm(buffer) {
-      if (buffer.length < 20) return;
-      
-      let avgEnergy = buffer.reduce((sum, b) => sum + b.energy, 0) / buffer.length;
-      
-      let peaks = [];
-      // バッファ全体から「周囲より高く、平均の1.15倍以上で、ある程度の音量がある」ピークをすべて抽出
-      for (let i = 1; i < buffer.length - 1; i++) {
-        if (buffer[i].energy > buffer[i-1].energy && 
-            buffer[i].energy > buffer[i+1].energy && 
-            buffer[i].energy > avgEnergy * 1.15 && 
-            buffer[i].energy > 5) {
-          peaks.push(buffer[i].time);
-        }
-      }
-
-      if (peaks.length >= 2) {
-        let intervals = [];
-        // 見つかったピーク同士の間隔（インターバル）を計算
-        for (let i = 1; i < peaks.length; i++) {
-          let interval = peaks[i] - peaks[i-1];
-          // 50BPM(1200ms) 〜 200BPM(300ms) の現実的な範囲の間隔のみ採用
-          if (interval >= 300 && interval <= 1200) { 
-            intervals.push(interval);
-          }
-        }
-
-        // 3秒間に見つかったインターバルの中央値をBPMとする
-        if (intervals.length > 0) {
-          intervals.sort((a,b) => a - b);
-          let median = intervals[Math.floor(intervals.length / 2)];
-          let calculated = Math.round(60000 / median);
-          
-          if (!realtimeBpm) {
-            realtimeBpm = calculated;
-            lastStableBpm = calculated;
-          } else {
-            // 急な変化を防ぐため、前回のBPMと今回のBPMを混ぜる（スムージング）
-            realtimeBpm = Math.round(realtimeBpm * 0.6 + calculated * 0.4);
-          }
-          
-          realtimeBpmVal.textContent = realtimeBpm;
-          realtimeBpmVal.classList.remove('beat-pulse');
-          void realtimeBpmVal.offsetWidth; 
-          realtimeBpmVal.classList.add('beat-pulse');
-
-          // BPMが大きく変わった場合は、楽曲が変わったと判断して再識別(3秒ごとなので2回連続で変わった場合)
-          if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
-            bpmChangeCounter++;
-            if (bpmChangeCounter >= 2) { 
-              bpmChangeCounter = 0;
-              lastStableBpm = realtimeBpm;
-              triggerIdentify();
-            }
-          } else {
-            bpmChangeCounter = 0;
-          }
-        }
-      }
-    }
 
     function triggerIdentify() {
       if (isIdentifying || !streamRef) return;
@@ -505,10 +472,10 @@
       mediaRecorder = new MediaRecorder(streamRef);
       mediaRecorder.ondataavailable = e => chunks.push(e.data);
       
+      // 歌詞のズレを直すため、基準時間を録音開始時点に戻す
+      recordStartTime = performance.now(); 
+      
       mediaRecorder.onstop = async () => {
-        // 歌詞のズレを直すため、時間の基準を「録音が終わった瞬間」にする
-        recordEndTime = performance.now(); 
-
         const blob = new Blob(chunks, { type: 'audio/wav' });
         const formData = new FormData();
         formData.append('audio', blob, 'audio.wav');
@@ -597,7 +564,8 @@
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
 
       function loop() {
-        const elapsedSec = (performance.now() - recordEndTime) / 1000;
+        // 経過時間は録音開始時点(recordStartTime)からの差分
+        const elapsedSec = (performance.now() - recordStartTime) / 1000;
         const currentPosSec = baseOffsetSec + elapsedSec;
 
         drawEnergyGraph(currentPosSec);
@@ -628,6 +596,7 @@
                 }
               });
 
+              // 中央よりやや上にスクロール（過ぎた歌詞が1〜2行見える位置）
               const desiredScrollTop = targetElem.offsetTop - 100;
               lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
             }
