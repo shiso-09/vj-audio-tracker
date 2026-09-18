@@ -36,13 +36,14 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: '音声データがありません' });
     }
 
-    // 1. ACRCloudで楽曲認識
+    // 1. ACRCloudで楽曲認識 (Parseエラーを修正)
     const result = await acr.identify(req.file.buffer);
-    const metadata = JSON.parse(result);
+    const metadata = typeof result === 'string' ? JSON.parse(result) : result;
 
     if (
       !metadata.status ||
       metadata.status.code !== 0 ||
+      !metadata.metadata ||
       !metadata.metadata.music ||
       metadata.metadata.music.length === 0
     ) {
@@ -59,7 +60,7 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
     
     let bpm = '不明';
 
-    if (spotifySearch.body.tracks.items.length > 0) {
+    if (spotifySearch.body.tracks && spotifySearch.body.tracks.items.length > 0) {
       const trackId = spotifySearch.body.tracks.items[0].id;
       try {
         const audioFeatures = await spotifyApi.getAudioFeaturesForTrack(trackId);
