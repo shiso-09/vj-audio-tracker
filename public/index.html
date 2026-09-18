@@ -199,6 +199,7 @@
       gap: 8px;
     }
     .lyrics-container {
+      position: relative;
       background: rgba(0, 0, 0, 0.35);
       border-radius: 16px;
       padding: 16px;
@@ -218,7 +219,7 @@
       border-radius: 4px;
     }
     .lyric-line {
-      font-size: 1.25rem;
+      font-size: 1.15rem;
       font-weight: 700;
       color: rgba(255, 255, 255, 0.35);
       line-height: 1.4;
@@ -232,9 +233,9 @@
     }
     .lyric-line.active {
       color: #ffffff;
-      font-size: 1.5rem;
+      font-size: 1.35rem;
       font-weight: 900;
-      transform: scale(1.03);
+      transform: scale(1.02);
       filter: none;
       text-shadow: 0 0 20px rgba(255, 255, 255, 0.6), 0 0 10px rgba(29, 185, 84, 0.4);
     }
@@ -279,7 +280,7 @@
       <div class="lyrics-section">
         <div class="section-title">LIVE SYNCED LYRICS</div>
         <div id="lyricsBox" class="lyrics-container">
-          <div class="lyric-line active" style="font-size: 1.1rem; color: #8e8e93;">
+          <div class="lyric-line active" style="font-size: 1.0rem; color: #8e8e93;">
             楽曲が識別されるとリアルタイム歌詞が表示されます。
           </div>
         </div>
@@ -301,7 +302,7 @@
     let segmentsData = [];
     let trackDurationSec = 0;
     let baseOffsetSec = 0;
-    let recordStartTime = 0; // 録音開始時のタイムスタンプ（タイムラグ補正用）
+    let recordStartTime = 0;
     let parsedLyrics = [];
 
     let autoRefreshTimer = null;
@@ -330,7 +331,7 @@
 
         lowpassFilter = audioCtx.createBiquadFilter();
         lowpassFilter.type = 'lowpass';
-        lowpassFilter.frequency.setValueAtTime(150, audioCtx.currentTime); // 150Hzに調整
+        lowpassFilter.frequency.setValueAtTime(150, audioCtx.currentTime);
 
         scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
         analyser.smoothingTimeConstant = 0.8;
@@ -355,7 +356,6 @@
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          // BPMの判定閾値を緩和（拾いやすく調整）
           if (currentEnergy > avgEnergy * 1.20 && currentEnergy > 8 && (now - lastBeatTime) > 300) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
@@ -430,7 +430,6 @@
       mediaRecorder = new MediaRecorder(streamRef);
       mediaRecorder.ondataavailable = e => chunks.push(e.data);
       
-      // 録音開始時点を基準時間として記録（タイムラグ補正の要）
       recordStartTime = performance.now();
       
       mediaRecorder.onstop = async () => {
@@ -526,7 +525,6 @@
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
 
       function loop() {
-        // API通信の時間を排除し、録音開始時からの経過時間で計算
         const elapsedSec = (performance.now() - recordStartTime) / 1000;
         const currentPosSec = baseOffsetSec + elapsedSec;
 
@@ -558,7 +556,7 @@
                 }
               });
 
-              // ハイライト行が「表示エリアのど真ん中」に来るように計算
+              // ハイライト部分が歌詞窓の中央に正確に位置するようにスクロール位置を再計算
               const containerHeight = lyricsBox.clientHeight;
               const desiredScrollTop = targetElem.offsetTop - (containerHeight / 2) + (targetElem.clientHeight / 2);
 
