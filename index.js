@@ -44,8 +44,9 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
     let energySegments = [];
     let trackDuration = 180;
     let albumArtUrl = null;
+    let spotifyBpm = null;
 
-    // 2. Spotify API（オーディオ解析・アートワーク取得）
+    // 2. Spotify API（BPM・アートワーク・構造解析）
     try {
       const spotifyApi = new SpotifyWebApi({
         clientId: process.env.SPOTIFY_CLIENT_ID,
@@ -61,6 +62,16 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
 
         if (trackObj.album && trackObj.album.images && trackObj.album.images.length > 0) {
           albumArtUrl = trackObj.album.images[0].url;
+        }
+
+        // BPM（Tempo）の取得
+        try {
+          const audioFeatures = await spotifyApi.getAudioFeaturesForTrack(trackObj.id);
+          if (audioFeatures.body && audioFeatures.body.tempo) {
+            spotifyBpm = Math.round(audioFeatures.body.tempo);
+          }
+        } catch (e) {
+          console.error('Spotify Audio Features Error:', e.message);
         }
 
         const audioAnalysis = await spotifyApi.getAudioAnalysisForTrack(trackObj.id);
@@ -122,6 +133,7 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
       success: true,
       title: title,
       artist: artist,
+      bpm: spotifyBpm,
       syncedLyrics: syncedLyrics,
       plainLyrics: plainLyrics,
       playOffset: playOffset,
@@ -132,7 +144,7 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
 
   } catch (error) {
     console.error('Error:', error);
-    res.status(500).json({ error: 'サーバー内でエラーが発生しました。' });
+    res.status(500).json({ error: 'サーバーエラーが発生しました。' });
   }
 });
 
