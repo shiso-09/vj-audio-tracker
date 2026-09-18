@@ -108,7 +108,7 @@
       padding: 18px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 20px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     }
 
@@ -149,25 +149,32 @@
     }
 
     .bpm-badge {
-      display: inline-flex;
-      align-items: baseline;
-      gap: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
       background: rgba(29, 185, 84, 0.15);
-      border: 1px solid rgba(29, 185, 84, 0.3);
-      padding: 6px 14px;
+      border: 1px solid rgba(29, 185, 84, 0.4);
+      padding: 15px;
       border-radius: 20px;
-      align-self: flex-start;
+      margin: 0 auto;
+      width: 100%;
+      max-width: 250px;
+      box-shadow: 0 4px 15px rgba(29, 185, 84, 0.1);
     }
     .bpm-label {
-      font-size: 0.75rem;
+      font-size: 0.85rem;
       color: #1db954;
       font-weight: 700;
       text-transform: uppercase;
+      letter-spacing: 2px;
     }
     .bpm-val {
-      font-size: 1.4rem;
+      font-size: 3.5rem;
       font-weight: 900;
       color: #1db954;
+      line-height: 1;
     }
 
     .graph-section {
@@ -220,9 +227,9 @@
       border-radius: 4px;
     }
     .lyric-line {
-      font-size: 1.3rem; /* 視認性向上のため大幅に拡大 */
+      font-size: 1.2rem;
       font-weight: 700;
-      color: rgba(255, 255, 255, 0.35);
+      color: rgba(255, 255, 255, 0.25);
       line-height: 1.4;
       transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
       transform-origin: left center;
@@ -231,12 +238,12 @@
       word-break: break-all;
     }
     .lyric-line.passed {
-      color: rgba(255, 255, 255, 0.6);
+      color: rgba(255, 255, 255, 0.5);
       filter: none;
     }
     .lyric-line.active {
       color: #ffffff;
-      font-size: 1.7rem; /* アクティブな歌詞をさらに強調して拡大 */
+      font-size: 1.6rem;
       font-weight: 900;
       transform: scale(1.02);
       filter: none;
@@ -301,6 +308,7 @@
     let realtimeBpm = null;
     let lastStableBpm = null;
     let bpmChangeCounter = 0;
+    let spotifyBpm = null; 
 
     let segmentsData = [];
     let trackDurationSec = 0;
@@ -359,7 +367,6 @@
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          // スマホマイクでもBPMを拾いやすくするため、エネルギーの閾値を緩和(1.20 -> 1.15, 8 -> 4)
           if (currentEnergy > avgEnergy * 1.15 && currentEnergy > 4 && (now - lastBeatTime) > 300) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
@@ -378,7 +385,7 @@
                   realtimeBpm = Math.round(realtimeBpm * 0.75 + calculated * 0.25);
                 }
                 
-                if (realtimeBpmVal.textContent === '--' || realtimeBpmVal.textContent === 'undefined') {
+                if (!spotifyBpm && realtimeBpm) {
                    realtimeBpmVal.textContent = realtimeBpm;
                 }
 
@@ -453,7 +460,10 @@
             document.getElementById('artistVal').textContent = data.artist;
             
             if (data.bpm) {
-              realtimeBpmVal.textContent = data.bpm;
+              spotifyBpm = data.bpm;
+              realtimeBpmVal.textContent = spotifyBpm;
+            } else {
+              spotifyBpm = null;
             }
 
             if (data.albumArtUrl) {
@@ -563,8 +573,8 @@
                 }
               });
 
-              // アクティブな行が上から約60px（過ぎた歌詞が1行だけ見える位置）に来るようにスクロール
-              const desiredScrollTop = targetElem.offsetTop - 60;
+              // 過ぎた歌詞が1行（約40px分）だけ上に見え、アクティブな行が上から2行目に来るよう微調整
+              const desiredScrollTop = targetElem.offsetTop - 40;
               lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
             }
           }
