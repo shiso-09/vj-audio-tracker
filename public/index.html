@@ -177,7 +177,6 @@
       line-height: 1;
       transition: all 0.1s ease-out;
     }
-    /* ビート検知時のアニメーション */
     @keyframes pulse-beat {
       0% { transform: scale(1.1); text-shadow: 0 0 20px #1db954; }
       100% { transform: scale(1); text-shadow: none; }
@@ -345,6 +344,12 @@
         streamRef = stream;
         
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // iOS Safari対策：AudioContextを確実に起動させる
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
         analyser = audioCtx.createAnalyser();
         microphone = audioCtx.createMediaStreamSource(stream);
 
@@ -363,25 +368,29 @@
 
         let energyHistory = [];
         
-        // --- 完全に独立したリアルタイムBPM解析ロジック ---
         scriptNode.onaudioprocess = () => {
           const array = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(array);
           
           let sum = 0;
-          for (let i = 0; i < array.length; i++) sum += array[i];
-          let currentEnergy = sum / array.length;
+          // 【修正】無音になった高音域を除外。低音域（最初の15ビン）のみで音量を計算
+          const limit = Math.min(15, array.length);
+          for (let i = 0; i < limit; i++) {
+            sum += array[i];
+          }
+          let currentEnergy = sum / limit;
 
           energyHistory.push(currentEnergy);
           if (energyHistory.length > 30) energyHistory.shift();
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          // 検知感度を上げ、確実にBPMを拾うように調整
-          if (currentEnergy > avgEnergy * 1.1 && currentEnergy > 1.5 && (now - lastBeatTime) > 300) {
+          
+          // 【修正】計算式が正常になったため、閾値を実用的な数値(20)に設定
+          if (currentEnergy > avgEnergy * 1.15 && currentEnergy > 20 && (now - lastBeatTime) > 300) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
-              if (interval >= 330 && interval <= 1000) { // 60BPM ~ 180BPMの範囲
+              if (interval >= 330 && interval <= 1000) { 
                 beatIntervals.push(interval);
                 if (beatIntervals.length > 10) beatIntervals.shift();
                 
@@ -393,19 +402,15 @@
                   realtimeBpm = calculated;
                   lastStableBpm = calculated;
                 } else {
-                  // スムージングをかけて数値を安定させる
                   realtimeBpm = Math.round(realtimeBpm * 0.8 + calculated * 0.2);
                 }
                 
-                // 【重要】API通信の状態に関わらず、毎回強制的にDOMを更新
                 realtimeBpmVal.textContent = realtimeBpm;
 
-                // ビート検知の瞬間にCSSアニメーションをトリガー
                 realtimeBpmVal.classList.remove('beat-pulse');
-                void realtimeBpmVal.offsetWidth; // リフローを強制してアニメーションを再起動
+                void realtimeBpmVal.offsetWidth; 
                 realtimeBpmVal.classList.add('beat-pulse');
 
-                // 大きなBPM変化があれば再識別を促す
                 if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
                   bpmChangeCounter++;
                   if (bpmChangeCounter >= 4) {
@@ -476,9 +481,6 @@
             document.getElementById('titleVal').textContent = data.title;
             document.getElementById('artistVal').textContent = data.artist;
             
-            // 【変更点】APIから取得したBPMをrealtimeBpmValに上書きする処理を完全削除
-            // 画面のBPM表示はマイクからの算出値のみに依存します。
-
             if (data.albumArtUrl) {
               albumArt.src = data.albumArtUrl;
               albumArt.style.display = 'block';
@@ -586,7 +588,6 @@
                 }
               });
 
-              // ハイライト部分を下げ、アクティブな歌詞がコンテナの中央付近に来るように調整
               const desiredScrollTop = targetElem.offsetTop - 100;
               lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
             }
