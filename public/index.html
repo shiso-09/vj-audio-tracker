@@ -3,145 +3,294 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VJ Audio & BPM Sync Tracker</title>
+  <title>VJ Audio & Live Lyrics Tracker</title>
   <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #121212;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+      background-color: #0d0d11;
       color: #ffffff;
       display: flex;
       flex-direction: column;
       align-items: center;
       min-height: 100vh;
-      margin: 0;
-      padding: 15px;
-      box-sizing: border-box;
+      padding: 20px 15px;
+      overflow-x: hidden;
+      position: relative;
+    }
+    /* 動的背景グラデーション効果 */
+    .bg-blur {
+      position: fixed;
+      top: -20%;
+      left: -20%;
+      width: 140%;
+      height: 140%;
+      background-size: cover;
+      background-position: center;
+      filter: blur(80px) brightness(0.25);
+      z-index: -1;
+      transition: background-image 1s ease-in-out;
     }
     .container {
-      max-width: 420px;
+      max-width: 460px;
       width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    header {
       text-align: center;
     }
-    h1 { font-size: 1.3rem; margin-bottom: 15px; }
-    .btn-group { display: flex; gap: 10px; justify-content: center; margin-bottom: 15px; }
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #8e8e93;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
     button {
-      background-color: #1db954;
+      background: linear-gradient(135deg, #1db954, #1aa34a);
       color: white;
       border: none;
-      padding: 12px 20px;
+      padding: 12px 22px;
       font-size: 0.95rem;
-      font-weight: bold;
+      font-weight: 700;
       border-radius: 30px;
       cursor: pointer;
+      box-shadow: 0 4px 15px rgba(29, 185, 84, 0.3);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    button:disabled { background-color: #555; }
-    .card {
-      background-color: #1e1e1e;
-      border-radius: 12px;
-      padding: 15px;
-      margin-top: 15px;
-      text-align: left;
+    button:active {
+      transform: scale(0.96);
     }
-    .bpm-box {
-      background: #2a2a2a;
-      padding: 12px;
-      border-radius: 8px;
-      margin: 10px 0;
-      text-align: center;
+    button:disabled {
+      background: #333338;
+      color: #777;
+      box-shadow: none;
+      cursor: not-allowed;
     }
-    .bpm-num { font-size: 2.8rem; font-weight: bold; color: #1db954; line-height: 1; margin-top: 4px; }
-    .info-item { margin-bottom: 8px; }
-    .info-label { font-size: 0.75rem; color: #aaa; }
-    .info-value { font-size: 1.0rem; font-weight: 600; }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(10px);
+      box-shadow: none;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
     
+    .status-text {
+      font-size: 0.8rem;
+      color: #a0a0a5;
+      text-align: center;
+      min-height: 1.2em;
+    }
+
+    /* メインカード */
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    /* アートワーク & 曲情報 (横並び) */
+    .track-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .album-art {
+      width: 80px;
+      height: 80px;
+      border-radius: 12px;
+      object-fit: cover;
+      background: #222;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+      flex-shrink: 0;
+      display: none;
+    }
+    .track-info {
+      flex: 1;
+      overflow: hidden;
+    }
+    .track-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #ffffff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+    .track-artist {
+      font-size: 0.95rem;
+      color: #b3b3b3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* BPM表示 */
+    .bpm-badge {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+      background: rgba(29, 185, 84, 0.15);
+      border: 1px solid rgba(29, 185, 84, 0.3);
+      padding: 6px 14px;
+      border-radius: 20px;
+      align-self: flex-start;
+    }
+    .bpm-label {
+      font-size: 0.75rem;
+      color: #1db954;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .bpm-val {
+      font-size: 1.4rem;
+      font-weight: 900;
+      color: #1db954;
+    }
+
+    /* 波形表示 */
+    .graph-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
     .graph-container {
-      margin-top: 6px;
-      background: #000;
-      border-radius: 8px;
-      padding: 8px;
-      border: 1px solid #333;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 12px;
+      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
     }
     canvas {
       width: 100%;
-      height: 60px;
+      height: 55px;
       display: block;
     }
 
-    .lyrics-wrapper {
+    /* Apple Music / Spotify ライブ歌詞スタイル */
+    .lyrics-section {
       display: flex;
-      gap: 12px;
-      margin-top: 6px;
-      align-items: stretch;
-    }
-    .album-art {
-      width: 120px;
-      height: 120px;
-      border-radius: 8px;
-      object-fit: cover;
-      flex-shrink: 0;
-      border: 1px solid #333;
-      display: none;
-      background-color: #222;
+      flex-direction: column;
+      gap: 8px;
     }
     .lyrics-container {
-      flex: 1;
-      background: #000;
-      border-radius: 8px;
-      padding: 12px;
-      height: 120px;
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 16px;
+      padding: 16px;
+      height: 230px;
       overflow-y: auto;
-      font-size: 0.88rem;
-      line-height: 1.6;
-      color: #777;
-      border: 1px solid #333;
-      box-sizing: border-box;
+      border: 1px solid rgba(255, 255, 255, 0.08);
       scroll-behavior: smooth;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .lyrics-container::-webkit-scrollbar {
+      width: 4px;
+    }
+    .lyrics-container::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
     }
     .lyric-line {
-      margin-bottom: 8px;
-      transition: color 0.2s ease, font-weight 0.2s ease, transform 0.2s ease;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.35);
+      line-height: 1.4;
+      transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+      transform-origin: left center;
+      filter: blur(0.5px);
     }
+    /* 歌い終わった過去行 */
+    .lyric-line.passed {
+      color: rgba(255, 255, 255, 0.6);
+      filter: none;
+    }
+    /* 現在歌唱中の行 (強力なハイライト) */
     .lyric-line.active {
-      color: #1db954;
-      font-weight: bold;
-      font-size: 0.95rem;
+      color: #ffffff;
+      font-size: 1.5rem;
+      font-weight: 900;
+      transform: scale(1.03);
+      filter: none;
+      text-shadow: 0 0 20px rgba(255, 255, 255, 0.6), 0 0 10px rgba(29, 185, 84, 0.4);
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>VJ Audio Tracker</h1>
+  <div id="bgBlur" class="bg-blur"></div>
 
-    <div class="btn-group">
-      <button id="startBtn">解析開始</button>
-      <button id="stopBtn" style="background-color: #e74c3c;" disabled>停止</button>
-    </div>
-    <div id="status" style="font-size:0.85rem; color:#aaa;">「解析開始」を押すとBPM・楽曲識別を開始します</div>
+  <div class="container">
+    <header>
+      <h1>VJ Live Audio Sync</h1>
+      <div class="btn-group">
+        <button id="startBtn">▶ トラッキング開始</button>
+        <button id="refreshBtn" class="btn-secondary" disabled>🔄 再識別</button>
+        <button id="stopBtn" style="background: #e74c3c;" disabled>■ 停止</button>
+      </div>
+    </header>
+
+    <div id="status" class="status-text">「トラッキング開始」を押してマイク解析を始動します</div>
 
     <div class="card">
-      <div class="bpm-box">
-        <div class="info-label">マイクリアルタイムBPM</div>
-        <div id="realtimeBpmVal" class="bpm-num">--</div>
-      </div>
-
-      <div class="info-item">
-        <div class="info-label">曲名</div>
-        <div id="titleVal" class="info-value">-</div>
-      </div>
-      <div class="info-item">
-        <div class="info-label">アーティスト</div>
-        <div id="artistVal" class="info-value">-</div>
-      </div>
-
-      <div class="info-label" style="margin-top:10px;">エネルギー構造 & 現在再生位置</div>
-      <div class="graph-container">
-        <canvas id="energyCanvas" width="380" height="60"></canvas>
-      </div>
-
-      <div class="info-label" style="margin-top:10px;">自動同期歌詞</div>
-      <div class="lyrics-wrapper">
+      <!-- アートワーク & 曲名（横並び） -->
+      <div class="track-header">
         <img id="albumArt" class="album-art" src="" alt="Album Art">
-        <div id="lyricsBox" class="lyrics-container">曲が識別されるとここに歌詞が表示されます。</div>
+        <div class="track-info">
+          <div id="titleVal" class="track-title">曲名未識別</div>
+          <div id="artistVal" class="track-artist">アーティスト未識別</div>
+        </div>
+      </div>
+
+      <!-- リアルタイムBPM -->
+      <div class="bpm-badge">
+        <span class="bpm-label">Live BPM</span>
+        <span id="realtimeBpmVal" class="bpm-val">--</span>
+      </div>
+
+      <!-- 波形エネルギー -->
+      <div class="graph-section">
+        <div class="section-title">AUDIO STRUCTURE & TRACK POSITION</div>
+        <div class="graph-container">
+          <canvas id="energyCanvas" width="400" height="55"></canvas>
+        </div>
+      </div>
+
+      <!-- ライブ歌詞 -->
+      <div class="lyrics-section">
+        <div class="section-title">LIVE SYNCED LYRICS</div>
+        <div id="lyricsBox" class="lyrics-container">
+          <div class="lyric-line active" style="font-size: 1.1rem; color: #8e8e93;">
+            楽曲が識別されるとリアルタイム歌詞が表示されます。
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -154,18 +303,27 @@
     let syncAnimId = null;
 
     let realtimeBpm = null;
+    let lastStableBpm = null;
+    let bpmChangeCounter = 0;
+
     let segmentsData = [];
     let trackDurationSec = 0;
     let baseOffsetSec = 0;
     let identifyTime = 0;
     let parsedLyrics = [];
 
+    let autoRefreshTimer = null;
+    let isIdentifying = false;
+    const RECORD_DURATION_MS = 10000; // 識別精度向上のため10秒間録音
+
     const startBtn = document.getElementById('startBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
     const stopBtn = document.getElementById('stopBtn');
     const statusDiv = document.getElementById('status');
     const realtimeBpmVal = document.getElementById('realtimeBpmVal');
     const lyricsBox = document.getElementById('lyricsBox');
     const albumArt = document.getElementById('albumArt');
+    const bgBlur = document.getElementById('bgBlur');
     const canvas = document.getElementById('energyCanvas');
     const ctx = canvas.getContext('2d');
 
@@ -178,7 +336,7 @@
         analyser = audioCtx.createAnalyser();
         microphone = audioCtx.createMediaStreamSource(stream);
 
-        // 低周波（キックドラム成分 140Hz以下）を抽出するローパスフィルター
+        // キックドラム（低音成分）を狙い撃ちする 140Hz ローパスフィルター
         lowpassFilter = audioCtx.createBiquadFilter();
         lowpassFilter.type = 'lowpass';
         lowpassFilter.frequency.setValueAtTime(140, audioCtx.currentTime);
@@ -206,104 +364,144 @@
           const avgEnergy = energyHistory.reduce((a, b) => a + b, 0) / energyHistory.length;
 
           const now = performance.now();
-          // 動的閾値によるピーク検知
           if (currentEnergy > avgEnergy * 1.35 && currentEnergy > 15 && (now - lastBeatTime) > 320) {
             if (lastBeatTime > 0) {
               const interval = now - lastBeatTime;
-              if (interval >= 330 && interval <= 1000) { // BPM 60 ~ 180の範囲
+              if (interval >= 330 && interval <= 1000) {
                 beatIntervals.push(interval);
                 if (beatIntervals.length > 10) beatIntervals.shift();
                 
-                // メディアン（中央値）フィルタで外れ値を除去してBPMを安定化
                 const sorted = [...beatIntervals].sort((a, b) => a - b);
                 const medianInterval = sorted[Math.floor(sorted.length / 2)];
                 const calculated = Math.round(60000 / medianInterval);
 
                 if (!realtimeBpm) {
                   realtimeBpm = calculated;
+                  lastStableBpm = calculated;
                 } else {
-                  // スルーレート制限（急激な変化を抑えてスムーズに追従）
-                  realtimeBpm = Math.round(realtimeBpm * 0.7 + calculated * 0.3);
+                  realtimeBpm = Math.round(realtimeBpm * 0.75 + calculated * 0.25);
                 }
                 realtimeBpmVal.textContent = realtimeBpm;
+
+                // BPM急変（±15%以上の乖離が連続検知）による自動再識別トリガー
+                if (lastStableBpm && Math.abs(realtimeBpm - lastStableBpm) / lastStableBpm > 0.15) {
+                  bpmChangeCounter++;
+                  if (bpmChangeCounter >= 4) { // 約4ビート継続したら曲調変化と判定
+                    console.log('BPM/曲調変化を検知。自動再識別を実行します。');
+                    bpmChangeCounter = 0;
+                    lastStableBpm = realtimeBpm;
+                    triggerIdentify('BPM変化検知のため自動更新中...');
+                  }
+                } else {
+                  bpmChangeCounter = 0;
+                }
               }
             }
             lastBeatTime = now;
           }
         };
 
-        mediaRecorder = new MediaRecorder(stream);
-        let chunks = [];
-        mediaRecorder.ondataavailable = e => chunks.push(e.data);
-        mediaRecorder.onstop = async () => {
-          statusDiv.textContent = '楽曲識別 & 構造解析中...';
-          const blob = new Blob(chunks, { type: 'audio/wav' });
-          const formData = new FormData();
-          formData.append('audio', blob, 'audio.wav');
-
-          try {
-            const res = await fetch('/api/identify', { method: 'POST', body: formData });
-            const data = await res.json();
-            if (data.success) {
-              document.getElementById('titleVal').textContent = data.title;
-              document.getElementById('artistVal').textContent = data.artist;
-              
-              if (data.albumArtUrl) {
-                albumArt.src = data.albumArtUrl;
-                albumArt.style.display = 'block';
-              } else {
-                albumArt.style.display = 'none';
-              }
-
-              // 歌詞データのパースとレンダリング
-              if (data.syncedLyrics) {
-                parsedLyrics = parseLrc(data.syncedLyrics);
-                renderSyncedLyrics(parsedLyrics);
-              } else {
-                parsedLyrics = [];
-                lyricsBox.textContent = data.plainLyrics || '歌詞が見つかりませんでした。';
-              }
-
-              segmentsData = (data.segments && data.segments.length > 0) 
-                ? data.segments 
-                : generateFallbackSegments(data.trackDuration || 180);
-
-              trackDurationSec = data.trackDuration || 180;
-              baseOffsetSec = data.playOffset || 0;
-              identifyTime = performance.now();
-
-              startSyncLoop();
-              statusDiv.textContent = '解析完了（同期表示中）';
-            } else {
-              statusDiv.textContent = '楽曲が認識できませんでした。';
-            }
-          } catch (err) {
-            statusDiv.textContent = '識別エラーが発生しました。';
-          }
-        };
-
-        mediaRecorder.start();
-        statusDiv.textContent = 'マイク解析中... (楽曲識別中)';
-        setTimeout(() => { if (mediaRecorder.state === 'recording') mediaRecorder.stop(); }, 5000);
-
         startBtn.disabled = true;
+        refreshBtn.disabled = false;
         stopBtn.disabled = false;
+
+        // 初回識別実行
+        triggerIdentify('マイク音声解析中 (10秒間)...');
+
+        // 1分間隔の定期自動更新タイマー設定
+        autoRefreshTimer = setInterval(() => {
+          triggerIdentify('定期自動更新中 (10秒間)...');
+        }, 60000);
 
       } catch (err) {
         alert('マイクアクセスが拒否されたか利用できません。');
       }
     });
 
+    // 手動更新ボタン
+    refreshBtn.addEventListener('click', () => {
+      triggerIdentify('手動更新中 (10秒間)...');
+    });
+
     stopBtn.addEventListener('click', () => {
       if (streamRef) streamRef.getTracks().forEach(t => t.stop());
       if (audioCtx) audioCtx.close();
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       startBtn.disabled = false;
+      refreshBtn.disabled = true;
       stopBtn.disabled = true;
-      statusDiv.textContent = '停止しました。';
+      statusDiv.textContent = 'トラッキングを停止しました。';
     });
 
-    // LRCタイムスタンプ文字列のパース処理 ([00:12.34] -> 秒数)
+    // 10秒間のマイク録音と識別処理のリクエスト
+    function triggerIdentify(statusMessage) {
+      if (isIdentifying || !streamRef) return;
+      isIdentifying = true;
+
+      statusDiv.textContent = statusMessage;
+      let chunks = [];
+      mediaRecorder = new MediaRecorder(streamRef);
+      mediaRecorder.ondataavailable = e => chunks.push(e.data);
+      
+      mediaRecorder.onstop = async () => {
+        statusDiv.textContent = '楽曲識別 & 構造解析中...';
+        const blob = new Blob(chunks, { type: 'audio/wav' });
+        const formData = new FormData();
+        formData.append('audio', blob, 'audio.wav');
+
+        try {
+          const res = await fetch('/api/identify', { method: 'POST', body: formData });
+          const data = await res.json();
+
+          if (data.success) {
+            document.getElementById('titleVal').textContent = data.title;
+            document.getElementById('artistVal').textContent = data.artist;
+            
+            if (data.albumArtUrl) {
+              albumArt.src = data.albumArtUrl;
+              albumArt.style.display = 'block';
+              bgBlur.style.backgroundImage = `url(${data.albumArtUrl})`;
+            } else {
+              albumArt.style.display = 'none';
+            }
+
+            if (data.syncedLyrics) {
+              parsedLyrics = parseLrc(data.syncedLyrics);
+              renderSyncedLyrics(parsedLyrics);
+            } else {
+              parsedLyrics = [];
+              lyricsBox.innerHTML = `<div class="lyric-line active" style="font-size:1.0rem;">${data.plainLyrics || '歌詞が見つかりませんでした。'}</div>`;
+            }
+
+            segmentsData = (data.segments && data.segments.length > 0) 
+              ? data.segments 
+              : generateFallbackSegments(data.trackDuration || 180);
+
+            trackDurationSec = data.trackDuration || 180;
+            baseOffsetSec = data.playOffset || 0;
+            identifyTime = performance.now();
+
+            startSyncLoop();
+            statusDiv.textContent = 'トラッキング中（1分毎・BPM変化時に自動更新）';
+          } else {
+            statusDiv.textContent = '楽曲が認識できませんでした。次回更新まで待機中...';
+          }
+        } catch (err) {
+          statusDiv.textContent = '識別エラーが発生しました。';
+        } finally {
+          isIdentifying = false;
+        }
+      };
+
+      mediaRecorder.start();
+      setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+      }, RECORD_DURATION_MS);
+    }
+
     function parseLrc(lrcText) {
       const lines = lrcText.split('\n');
       const result = [];
@@ -336,7 +534,6 @@
       });
     }
 
-    // 再生位置と同期した歌詞ハイライト＆自動スクロールループ
     function startSyncLoop() {
       if (syncAnimId) cancelAnimationFrame(syncAnimId);
 
@@ -344,10 +541,8 @@
         const elapsedSec = (performance.now() - identifyTime) / 1000;
         const currentPosSec = baseOffsetSec + elapsedSec;
 
-        // 1. 波形グラフィック更新
         drawEnergyGraph(currentPosSec);
 
-        // 2. 歌詞同期＆スクロール更新
         if (parsedLyrics.length > 0) {
           let activeIndex = -1;
           for (let i = 0; i < parsedLyrics.length; i++) {
@@ -359,21 +554,30 @@
           }
 
           if (activeIndex !== -1) {
-            let currentActive = lyricsBox.querySelector('.lyric-line.active');
             let targetElem = document.getElementById(`lyric-line-${activeIndex}`);
 
-            if (targetElem && currentActive !== targetElem) {
-              if (currentActive) currentActive.classList.remove('active');
-              targetElem.classList.add('active');
+            if (targetElem && !targetElem.classList.contains('active')) {
+              // クラス状態の更新（過去行・現在行のグラデーション）
+              parsedLyrics.forEach((_, idx) => {
+                const elem = document.getElementById(`lyric-line-${idx}`);
+                if (elem) {
+                  elem.classList.remove('active', 'passed');
+                  if (idx < activeIndex) {
+                    elem.classList.add('passed');
+                  } else if (idx === activeIndex) {
+                    elem.classList.add('active');
+                  }
+                }
+              });
 
-              // 「現在行 ＋ 2行先」が歌詞表示エリア内に綺麗に収まるようにスクロール位置を補正
+              // 「現在行 ＋ 2行先」が歌詞ボックス内に収まるスクロール追従計算
               const targetAheadIndex = Math.min(activeIndex + 2, parsedLyrics.length - 1);
               const targetAheadElem = document.getElementById(`lyric-line-${targetAheadIndex}`);
               
               if (targetAheadElem) {
                 const containerHeight = lyricsBox.clientHeight;
                 const aheadElemBottom = targetAheadElem.offsetTop + targetAheadElem.offsetHeight;
-                const desiredScrollTop = aheadElemBottom - containerHeight + 10;
+                const desiredScrollTop = aheadElemBottom - containerHeight + 16;
 
                 if (lyricsBox.scrollTop < desiredScrollTop || lyricsBox.scrollTop > targetElem.offsetTop) {
                   lyricsBox.scrollTo({ top: Math.max(0, desiredScrollTop), behavior: 'smooth' });
