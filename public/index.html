@@ -56,7 +56,6 @@
     .info-label { font-size: 0.75rem; color: #aaa; }
     .info-value { font-size: 1.0rem; font-weight: 600; }
     
-    /* エネルギー変化グラフ (Canvas) */
     .graph-container {
       margin-top: 6px;
       background: #000;
@@ -66,11 +65,10 @@
     }
     canvas {
       width: 100%;
-      height: 60px;
+      height: 65px;
       display: block;
     }
 
-    /* アートワーク & 歌詞表示レイアウト */
     .lyrics-wrapper {
       display: flex;
       gap: 10px;
@@ -112,11 +110,24 @@
       border-radius: 6px;
     }
     .ratio-highlight { color: #1db954; font-weight: bold; }
+    .warning-box {
+      background: #3a2000;
+      color: #ffaa00;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      margin-bottom: 10px;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>VJ Audio Tracker</h1>
+    <div id="warnBox" class="warning-box">
+      ⚠️ Spotify API認証エラーのため、簡易波形モードで動作しています。Renderの環境変数（Client ID / Secret）をご確認ください。
+    </div>
+
     <div class="btn-group">
       <button id="startBtn">解析開始</button>
       <button id="stopBtn" style="background-color: #e74c3c;" disabled>停止</button>
@@ -144,13 +155,11 @@
         <div id="artistVal" class="info-value">-</div>
       </div>
 
-      <!-- 楽曲エネルギー構造グラフ -->
       <div class="info-label" style="margin-top:10px;">エネルギー構造 & 現在再生位置</div>
       <div class="graph-container">
-        <canvas id="energyCanvas" width="380" height="60"></canvas>
+        <canvas id="energyCanvas" width="380" height="65"></canvas>
       </div>
 
-      <!-- アートワーク & 自動同期歌詞 -->
       <div class="info-label" style="margin-top:10px;">自動同期歌詞</div>
       <div class="lyrics-wrapper">
         <img id="albumArt" class="album-art" src="" alt="Album Art">
@@ -190,6 +199,7 @@
     const lyricsBox = document.getElementById('lyricsBox');
     const albumArt = document.getElementById('albumArt');
     const syncRatioVal = document.getElementById('syncRatioVal');
+    const warnBox = document.getElementById('warnBox');
     const canvas = document.getElementById('energyCanvas');
     const ctx = canvas.getContext('2d');
 
@@ -198,7 +208,6 @@
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         streamRef = stream;
         
-        // 1. リアルタイムBPM解析
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioCtx.createAnalyser();
         microphone = audioCtx.createMediaStreamSource(stream);
@@ -239,7 +248,6 @@
           }
         };
 
-        // 2. 楽曲識別 & 構造解析
         mediaRecorder = new MediaRecorder(stream);
         let chunks = [];
         mediaRecorder.ondataavailable = e => chunks.push(e.data);
@@ -256,14 +264,19 @@
               document.getElementById('titleVal').textContent = data.title;
               document.getElementById('artistVal').textContent = data.artist;
               
-              if (data.apiBpm && typeof data.apiBpm === 'number') {
+              if (data.spotifyError) {
+                warnBox.style.display = 'block';
+              } else {
+                warnBox.style.display = 'none';
+              }
+
+              if (data.apiBpm) {
                 originalBpm = data.apiBpm;
                 originalBpmVal.textContent = originalBpm;
               } else {
                 originalBpmVal.textContent = '不明';
               }
 
-              // アートワーク画像の表示切り替え
               if (data.albumArtUrl) {
                 albumArt.src = data.albumArtUrl;
                 albumArt.style.display = 'block';
@@ -273,9 +286,14 @@
 
               lyricsBox.textContent = data.lyrics;
 
-              // グラフデータの準備
-              segmentsData = data.segments || [];
-              trackDurationSec = data.trackDuration || (segmentsData.length ? segmentsData[segmentsData.length - 1].start + segmentsData[segmentsData.length - 1].duration : 180);
+              // セグメントがない（Spotifyエラー等）場合のフォールバック擬似波形生成
+              if (!data.segments || data.segments.length === 0) {
+                segmentsData = generateFallbackSegments(data.trackDuration || 180);
+              } else {
+                segmentsData = data.segments;
+              }
+
+              trackDurationSec = data.trackDuration || 180;
               baseOffsetSec = data.playOffset || 0;
               identifyTime = performance.now();
 
@@ -283,7 +301,7 @@
               startAutoScroll();
               renderEnergyGraph();
 
-              statusDiv.textContent = '解析完了（同期スクロール実行中）';
+              statusDiv.textContent = '解析完了（同期表示中）';
             } else {
               statusDiv.textContent = '楽曲が認識できませんでした。';
             }
@@ -314,6 +332,19 @@
       statusDiv.textContent = '停止しました。';
     });
 
+    // Spotifyデータがない場合の擬似エネルギーデータ生成
+    function generateFallbackSegments(duration) {
+      const segs = [];
+      const step = 2;
+      for (let t = 0; t < duration; t += step) {
+        // サンプル的な盛り上がり波形
+        const progress = t / duration;
+        let loudness = -30 + Math.sin(progress * Math.PI * 4) * 15 + Math.random() * 5;
+        segs.push({ start: t, duration: step, loudness: loudness });
+      }
+      return segs;
+    }
+
     function updateScrollSync() {
       const basePx = 0.8;
       if (originalBpm && realtimeBpm && originalBpm > 0) {
@@ -343,7 +374,7 @@
         if (segmentsData.length > 0 && trackDurationSec > 0) {
           segmentsData.forEach(seg => {
             const x = (seg.start / trackDurationSec) * canvas.width;
-            const w = Math.max(1, (seg.duration / trackDurationSec) * canvas.width);
+            const w = Math.max(1.5, (seg.duration / trackDurationSec) * canvas.width);
             const normLoudness = Math.max(0, Math.min(1, (seg.loudness + 60) / 60));
             const h = normLoudness * canvas.height;
             const y = canvas.height - h;
@@ -371,10 +402,6 @@
             ctx.lineTo(markerX, 6);
             ctx.fill();
           }
-        } else {
-          ctx.fillStyle = '#555';
-          ctx.font = '12px sans-serif';
-          ctx.fillText('構造データが取得できませんでした', 10, 35);
         }
 
         graphAnimId = requestAnimationFrame(draw);
